@@ -1,6 +1,6 @@
 # Sierra Valley Health — Patient Access Agent
 
-Grace is a first-line AI agent for the Patient Access Center at Sierra Valley Health, a fictional regional health system. She books, reschedules and cancels appointments, takes prescription refill requests, and answers general questions (hours, locations, parking, visit prep, insurance, portal password reset). Everything else, including symptoms, test results, billing disputes and anything she can't resolve, goes to staff with a short summary. Emergencies are handled immediately, never queued.
+Clara is a first-line AI agent for the Patient Access Center at Sierra Valley Health, a fictional regional health system. She books, reschedules and cancels appointments, takes prescription refill requests, and answers general questions (hours, locations, parking, visit prep, insurance, portal password reset). Everything else, including symptoms, test results, billing disputes and anything she can't resolve, goes to staff with a short summary. Emergencies are handled immediately, never queued.
 
 I built it to learn the Claude API and agent design: tool use, guardrails enforced in code, and clean handoffs to people. Built with the Anthropic Claude API and Gradio. Tools and data are mocked: in memory, or in a Google Sheet so you can watch records change during a demo. The design write-up is in [DESIGN.md](DESIGN.md).
 
@@ -58,18 +58,18 @@ Open slots are generated for the next two weeks, relative to today, so the demo 
 
 | Behavior | Try this | What happens |
 |---|---|---|
-| **Multi-turn collection** | `I'd like to book an appointment` | Grace collects the reason, specialty, timing and visit type, verifies name + DOB, offers up to three open slots, and books only after you confirm. |
+| **Multi-turn collection** | `I'd like to book an appointment` | Clara collects the reason, specialty, timing and visit type, verifies name + DOB, offers up to three open slots, and books only after you confirm. |
 | **Tool use** | `Refill my lisinopril` (as Maria Lopez) | `verify_patient`, then `submit_refill_request`. The request goes to Dr. Chen for review; it is never an approval. |
-| **Clarifying question** | `I need to see someone about my knee` / `Can you refill my meds?` | Grace asks whether you want primary care or orthopedics / which medication, one question at a time. As Alex Kim, choosing orthopedics ends in the referral rule: Grace offers a primary care visit or a handoff to scheduling. |
-| **Handoff** | `I've had a headache for 3 days and my BP meds aren't working` | No clinical advice. Grace verifies you (or takes a name and callback number) and calls `handoff_to_staff` to the nurse line with a 2-3 sentence summary. |
+| **Clarifying question** | `I need to see someone about my knee` / `Can you refill my meds?` | Clara asks whether you want primary care or orthopedics / which medication, one question at a time. As Alex Kim, choosing orthopedics ends in the referral rule: Clara offers a primary care visit or a handoff to scheduling. |
+| **Handoff** | `I've had a headache for 3 days and my BP meds aren't working` | No clinical advice. Clara verifies you (or takes a name and callback number) and calls `handoff_to_staff` to the nurse line with a 2-3 sentence summary. |
 
 Also worth trying:
 
-- **Emergency:** `My dad has chest pain and his arm is numb`. Grace directs you to 911 immediately and doesn't queue it. A keyword check in code adds the 911 notice even if the model forgets.
+- **Emergency:** `My dad has chest pain and his arm is numb`. Clara directs you to 911 immediately and doesn't queue it. A keyword check in code adds the 911 notice even if the model forgets.
 - **Late-cancellation fee:** as Maria, `cancel my appointment tomorrow`. The tool refuses until you accept the $50 fee.
 - **Controlled substance:** as Sarah, `refill my alprazolam`. Refused in code and routed to the provider's office.
 - **Billing dispute:** `I was charged twice for my last visit`. Handed off to billing.
-- **Failed verification:** give a wrong date of birth three times. Grace locks verification and hands off to Patient Access.
+- **Failed verification:** give a wrong date of birth three times. Clara locks verification and hands off to Patient Access.
 - **General questions:** `Where do I park at Midtown?`, `What insurance do you take?`, `I forgot my portal password`.
 
 ---

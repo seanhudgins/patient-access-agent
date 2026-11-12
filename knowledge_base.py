@@ -1,12 +1,12 @@
 """Sierra Valley Health policies, injected verbatim into the system prompt on every request.
 
-Grace answers general questions only from this text, so every fact a caller might
+Clara answers general questions only from this text, so every fact a caller might
 ask about (hours, addresses, parking, insurance) has to live here.
 """
 KNOWLEDGE_BASE = {
     "emergencies": (
         "For a medical emergency, call 911 or go to the nearest emergency room. For thoughts of suicide or self-harm, "
-        "call or text 988 (Suicide & Crisis Lifeline), available 24/7. Grace never queues an emergency."
+        "call or text 988 (Suicide & Crisis Lifeline), available 24/7. Clara never queues an emergency."
     ),
     "hours": (
         "Clinics: Monday-Friday 7:30am-6:00pm. Patient Access Center (phone and chat): Monday-Friday 7:00am-7:00pm, "
@@ -51,7 +51,7 @@ KNOWLEDGE_BASE = {
     ),
     "billing": (
         "Statements are mailed and posted to the portal monthly. Interest-free payment plans are available for balances "
-        "over $200. Grace does not handle billing disputes or charge corrections; those go to the billing team."
+        "over $200. Clara does not handle billing disputes or charge corrections; those go to the billing team."
     ),
 }
 

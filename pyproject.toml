@@ -1,7 +1,7 @@
 [project]
 name = "sierra-valley-patient-access-agent"
 version = "0.1.0"
-description = "Grace: AI patient access agent for Sierra Valley Health, a fictional regional health system"
+description = "Clara: AI patient access agent for Sierra Valley Health, a fictional regional health system"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [

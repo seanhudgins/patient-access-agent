@@ -342,7 +342,7 @@ def handoff_to_staff(
         result = create_case_sf(
             subject=f"[{queue}] {summary[:80]}",
             description=f"Caller: {handoff['caller']} ({handoff['patient_id']})\n"
-                        f"Callback: {handoff['callback_phone']}\nSource: Grace virtual assistant\n\n{summary}",
+                        f"Callback: {handoff['callback_phone']}\nSource: Clara virtual assistant\n\n{summary}",
             priority={"urgent": "High", "high": "High"}.get(priority, "Medium"),
         )
         if not result["success"]:

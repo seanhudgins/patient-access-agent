@@ -256,19 +256,19 @@ LOGO_HTML = """
   </div>
 </div>
 <div id="brand-tagline">
-  Chat with Grace &nbsp;&mdash;&nbsp; Sierra Valley Health Patient Access Center
+  Chat with Clara &nbsp;&mdash;&nbsp; Sierra Valley Health Patient Access Center
 </div>
 """
 
 EMERGENCY_HTML = """
 <div id="emergency-banner">
   <strong>Medical emergency? Call 911.</strong> &nbsp;Thoughts of suicide or self-harm? Call or text <strong>988</strong>.
-  &nbsp;Patient Access: 555-301-4000. &nbsp;Grace can't give medical advice.
+  &nbsp;Patient Access: 555-301-4000. &nbsp;Clara can't give medical advice.
 </div>
 """
 
 WELCOME_MSG = (
-    "Hi, I'm Grace with the Sierra Valley Health Patient Access Center. I can help you book, reschedule, "
+    "Hi, I'm Clara with the Sierra Valley Health Patient Access Center. I can help you book, reschedule, "
     "or cancel an appointment, request a prescription refill, or answer questions about hours, locations, "
     "parking, and more. How can I help you today?"
 )

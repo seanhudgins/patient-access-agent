@@ -1,7 +1,7 @@
-# Grace: Patient Access Agent for Sierra Valley Health
+# Clara: Patient Access Agent for Sierra Valley Health
 **Sean Hudgins · a project for learning the Claude API and agent design**
 
-Grace is the first-line agent for the Sierra Valley Health Patient Access Center. Her job is to resolve routine requests (scheduling, refill requests, general questions) and hand everything else to staff with enough context that the patient never has to repeat themselves. The design principle throughout: **the model decides what to say; code decides what is allowed.** Anything that carries patient risk (identity, consent to a fee, controlled substances, referrals) is enforced in a tool, where the model can't talk its way around it.
+Clara is the first-line agent for the Sierra Valley Health Patient Access Center. Her job is to resolve routine requests (scheduling, refill requests, general questions) and hand everything else to staff with enough context that the patient never has to repeat themselves. The design principle throughout: **the model decides what to say; code decides what is allowed.** Anything that carries patient risk (identity, consent to a fee, controlled substances, referrals) is enforced in a tool, where the model can't talk its way around it.
 
 ---
 
@@ -44,7 +44,7 @@ Every turn resolves to one of four moves, and the prompt states the rule for eac
 
 **Confirmation gates** sit in front of consequential actions: booking requires the caller to choose and confirm a slot; cancelling requires a read-back. A cancellation inside 24 hours is refused by the tool until it's called with `acknowledge_late_fee=true`, so the caller can't be charged a fee they didn't agree to. Rescheduling books the new slot before cancelling the old one, so a failure midway never leaves the patient without an appointment.
 
-**Handoff** goes through `handoff_to_staff(queue, summary, priority)`. Queues: `nurse_line` (clinical), `provider_office` (controlled substances), `billing`, `scheduling` (referrals, complex cases), `patient_access` (failed verification, anything else). The summary is 2-3 sentences written for the staff member: what the caller wants, what Grace already checked, and anything time-sensitive. Staff need to reach the caller, so the tool refuses an unverified handoff without a name and callback number. Grace then tells the caller who will follow up and when. Emergencies are never handed off; see section 4.
+**Handoff** goes through `handoff_to_staff(queue, summary, priority)`. Queues: `nurse_line` (clinical), `provider_office` (controlled substances), `billing`, `scheduling` (referrals, complex cases), `patient_access` (failed verification, anything else). The summary is 2-3 sentences written for the staff member: what the caller wants, what Clara already checked, and anything time-sensitive. Staff need to reach the caller, so the tool refuses an unverified handoff without a name and callback number. Clara then tells the caller who will follow up and when. Emergencies are never handed off; see section 4.
 
 **Memory:** the session keeps the full transcript, including tool calls and results, not just the visible chat. An early build reconstructed context from the visible chat only; the model then lost the `provider_id` from an earlier availability search and booked the right time with the wrong doctor. Keeping tool results in state fixed it, and is the right model for a real deployment too.
 
@@ -52,7 +52,7 @@ Every turn resolves to one of four moves, and the prompt states the rule for eac
 
 The prompt in use is `_SYSTEM_PROMPT_TEMPLATE` in [`agent.py`](agent.py). Its structure:
 
-1. **Role and scope:** Grace, Patient Access Center, what she resolves and what she hands off; short replies because patients may be on a phone or a call.
+1. **Role and scope:** Clara, Patient Access Center, what she resolves and what she hands off; short replies because patients may be on a phone or a call.
 2. **Safety rules that override everything:** emergencies first; no clinical advice; verify before disclosing or changing anything; never invent facts; refills are requests, never approvals; collect only what's needed.
 3. **How to decide:** the answer / ask / act / hand off rules above, with worked examples of ambiguous requests.
 4. **Workflows:** booking, cancelling, rescheduling, refills.
@@ -71,7 +71,7 @@ Rules that matter most are stated twice: once in the prompt, once in the tool's 
 | Clinical advice | Prompt bans diagnosis, triage, results interpretation and medication advice; all of it routes to `nurse_line`. |
 | Refill treated as approval | The tool can only create `pending_provider_review`; the prompt and schema both say "never an approval". |
 | Controlled substances | Refused in code and routed to the provider's office. |
-| Specialist without referral | `book_appointment` refuses new orthopedics or cardiology patients without a referral on file; Grace offers primary care or a scheduling handoff. |
+| Specialist without referral | `book_appointment` refuses new orthopedics or cardiology patients without a referral on file; Clara offers primary care or a scheduling handoff. |
 | Runaway tool loops | 10-step cap with a safe fallback that includes the phone number and 911 guidance. |
 
 ## 5. Healthcare considerations
@@ -79,14 +79,14 @@ Rules that matter most are stated twice: once in the prompt, once in the tool's 
 **Identity before disclosure.** `verify_patient` matches first name, last name and date of birth (DOB accepted in any common format). The verified patient ID lives in server-side session state; every patient-specific tool reads it from there, so the model cannot query or change another patient's record even if prompted to. Failures return a generic message that doesn't reveal which field was wrong, and verification locks after three failed attempts, routing to a human. Another patient's appointment ID is reported as "not found" rather than "not yours". *In production:* name + DOB is a weak factor. I'd add a second factor such as a one-time code to the phone or email on file, use authenticated portal or caller-ID context where available, handle proxy access (parents, caregivers) explicitly, and step up verification before higher-risk actions.
 
 **PHI handling.**
-- *What goes to the LLM:* only what the current task needs. Tools return minimal fields (no full chart, no other patients); the prompt tells Grace not to collect medical history, and handoff summaries carry only what staff need.
+- *What goes to the LLM:* only what the current task needs. Tools return minimal fields (no full chart, no other patients); the prompt tells Clara not to collect medical history, and handoff summaries carry only what staff need.
 - *Vendor agreements:* a BAA with the model provider, with zero-data-retention or equivalent settings, plus BAAs with hosting, the contact center platform and any CRM.
 - *Logging:* transcripts are PHI. Store them encrypted, access-controlled and retained per policy. Operational logs (latency, tool names, error codes, safety-gate firings) should be redacted of identifiers so engineers can debug without PHI access. An immutable audit log records each record access and change: who, which patient, which tool, when.
 - *Redaction:* an entity-detection pass before logging and analytics; keep raw PHI only in the system of record.
 
 **Emergency and self-harm language.** Handled in two layers. The prompt makes emergencies the first rule: direct to 911 or the nearest ER, and to 988 for self-harm, before anything else, without queuing. A deterministic regex in `agent.py` then checks the caller's message for red-flag phrases, and if the reply doesn't contain "911", prepends the emergency notice anyway. The model handles nuance; the regex guarantees the floor. On voice, I'd add a warm transfer to a live clinician or 911 bridge rather than a callback. *In production:* replace the regex with a dedicated classifier tuned for recall, and have clinical leadership review the phrase list and responses.
 
-**Refills as requests.** There is no code path that approves a refill. Every request lands as `pending_provider_review` with the prescriber and preferred pharmacy attached, and Grace tells the patient it's a request the provider will review within 2 business days.
+**Refills as requests.** There is no code path that approves a refill. Every request lands as `pending_provider_review` with the prescriber and preferred pharmacy attached, and Clara tells the patient it's a request the provider will review within 2 business days.
 
 ## 6. Production readiness
 

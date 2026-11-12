@@ -141,6 +141,6 @@ def _build_slots() -> dict[str, list[str]]:
 
 AVAILABLE_SLOTS: dict[str, list[str]] = _build_slots()
 
-# Refill requests and staff handoffs start empty; Grace creates them during the demo.
+# Refill requests and staff handoffs start empty; Clara creates them during the demo.
 MOCK_REFILL_REQUESTS: list[dict] = []
 MOCK_HANDOFFS: list[dict] = []
