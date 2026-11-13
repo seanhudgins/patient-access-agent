@@ -10,6 +10,8 @@ import time
 import urllib.parse
 import urllib.request
 
+from credentials import get_secret
+
 SF_API_VERSION = "v59.0"
 # URL mapping of the Apex REST class that creates cases (/services/apexrest/<mapping>/)
 SF_CASE_ENDPOINT = os.environ.get("SALESFORCE_CASE_ENDPOINT", "AssistantActions")
@@ -26,7 +28,7 @@ def _get_access_token() -> str:
     data = urllib.parse.urlencode({
         "grant_type": "client_credentials",
         "client_id": os.environ["SALESFORCE_CLIENT_ID"],
-        "client_secret": os.environ["SALESFORCE_CLIENT_SECRET"],
+        "client_secret": get_secret("salesforce-client-secret", "SALESFORCE_CLIENT_SECRET") or "",
     }).encode()
     req = urllib.request.Request(
         f"{instance}/services/oauth2/token", data=data, method="POST"

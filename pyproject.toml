@@ -8,5 +8,6 @@ dependencies = [
     "anthropic>=0.91.0",
     "gradio>=6.11.0",
     "gspread>=6.2.1",
+    "keyring>=25.7.0",
     "python-dotenv>=1.2.2",
 ]

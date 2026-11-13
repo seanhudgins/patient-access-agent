@@ -14,11 +14,19 @@ I built it to learn the Claude API and agent design: tool use, guardrails enforc
 uv sync
 ```
 
-**2. Create `.env`** in the project root
+**2. Store your API key** in the OS keychain (macOS Keychain or Windows Credential Manager), not in a file.
+It prompts for the key, so it never lands in your shell history:
+
+```bash
+uv run keyring set patient-access anthropic
+```
+
+No keychain (for example in CI)? Set `ANTHROPIC_API_KEY` as an environment variable instead; it's only used
+when the keychain has no entry.
+
+**Optional: create `.env`** in the project root for non-secret settings:
 
 ```
-ANTHROPIC_API_KEY=sk-ant-...
-
 # Where data lives: mock (default) | sheets | salesforce
 DATA_BACKEND=mock
 ```
@@ -87,6 +95,7 @@ data_store.py            # Data backends (in-memory or Google Sheets) behind one
 mock_data.py             # Synthetic patients, providers, appointments, prescriptions, slots
 seed_sheet.py            # Resets the Google Sheet to fresh demo data
 salesforce_client.py     # Optional: staff handoffs as Salesforce Cases
+credentials.py           # Reads secrets from the OS keychain (env var fallback)
 salesforce/AssistantActionService.cls  # Apex REST class for case creation
 DESIGN.md                # Architecture and design decisions
 ```
@@ -108,7 +117,7 @@ DESIGN.md                # Architecture and design decisions
 
 ### Salesforce setup (optional)
 
-1. Create a Connected App with OAuth scope `api` and **Client Credentials Flow** (Run As an integration user). Put the consumer key and secret in `.env` as `SALESFORCE_CLIENT_ID` / `SALESFORCE_CLIENT_SECRET`, plus `SALESFORCE_INSTANCE_URL`.
+1. Create a Connected App with OAuth scope `api` and **Client Credentials Flow** (Run As an integration user). Store the consumer secret with `uv run keyring set patient-access salesforce-client-secret`, and put `SALESFORCE_CLIENT_ID` and `SALESFORCE_INSTANCE_URL` in `.env`.
 2. Deploy `salesforce/AssistantActionService.cls` (Developer Console → File → New → Apex Class). Give the integration user **Create** on Case and access to the class.
 3. Set `DATA_BACKEND=salesforce`. Set `SALESFORCE_CASE_ENDPOINT` only if you deploy the class under a different URL mapping.
 

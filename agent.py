@@ -1,9 +1,9 @@
 import datetime
-import os
 import re
 
 import anthropic
 
+from credentials import get_secret
 from knowledge_base import get_kb_summaries
 from data_store import get_store
 from tools import TOOL_SCHEMAS, dispatch_tool
@@ -67,7 +67,7 @@ CONVERSATION STATE
 Patient Access Center phone: {phone}. Today: {today}."""
 
 
-_CLIENT = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+_CLIENT = anthropic.Anthropic(api_key=get_secret("anthropic", "ANTHROPIC_API_KEY"))
 
 
 def _session_status(session: dict) -> str:
