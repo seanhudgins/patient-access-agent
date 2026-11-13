@@ -97,6 +97,7 @@ seed_sheet.py            # Resets the Google Sheet to fresh demo data
 salesforce_client.py     # Optional: staff handoffs as Salesforce Cases
 credentials.py           # Reads secrets from the OS keychain (env var fallback)
 salesforce/AssistantActionService.cls  # Apex REST class for case creation
+salesforce/seed_demo_data.apex         # Demo patients + a sample Case for a Developer org
 DESIGN.md                # Architecture and design decisions
 ```
 
@@ -108,17 +109,60 @@ DESIGN.md                # Architecture and design decisions
 | `sheets` | Google Sheet | Google Sheet | Every booking, cancellation, refill request and handoff appears as a row, live. |
 | `salesforce` | In memory | Salesforce Cases | For a contact-center-style queue. Needs an org (below). |
 
+### Where secrets go
+Every secret lives in the OS keychain (macOS Keychain or Windows Credential Manager) under the service
+`patient-access`, never in `.env` or the repo. `.env` holds only settings that aren't secret.
+
+| Secret | Store it with | Fallback env var (CI only) |
+|---|---|---|
+| Claude API key | `uv run keyring set patient-access anthropic` | `ANTHROPIC_API_KEY` |
+| Google service-account key | `uv run credentials.py store-google ~/Downloads/<key>.json`, then delete the file | `GOOGLE_SERVICE_ACCOUNT_JSON` |
+| Salesforce consumer key | `uv run keyring set patient-access salesforce-client-id` | `SALESFORCE_CLIENT_ID` |
+| Salesforce consumer secret | `uv run keyring set patient-access salesforce-client-secret` | `SALESFORCE_CLIENT_SECRET` |
+
+`keyring set` prompts for the value, so it never lands in your shell history. To check one is stored
+without showing it, on a Mac: `security find-generic-password -s patient-access -a anthropic >/dev/null && echo stored`.
+Windows Credential Manager caps each entry at about 2.5 KB, which a Google key can exceed; on Windows, keep
+the key file outside the repo and point `GOOGLE_SERVICE_ACCOUNT_FILE` at it.
+
 ### Google Sheets setup
 
-1. In Google Cloud, enable the **Google Sheets API** and create a **service account** (no project roles needed). Download its JSON key as `service_account.json` in the project root. It's gitignored.
+1. In Google Cloud, enable the **Google Sheets API** and create a **service account** (no project roles needed).
+   Download its JSON key, store it with `uv run credentials.py store-google ~/Downloads/<key>.json`, then delete
+   the downloaded file.
 2. Create a Google Sheet and share it with the service account's `client_email` as an **Editor**.
-3. In `.env`: `DATA_BACKEND=sheets`, `GOOGLE_SHEET_ID=<the ID from the sheet's URL>`, and optionally `GOOGLE_SERVICE_ACCOUNT_FILE` if the key lives elsewhere.
-4. `uv run start_demo.py` creates the tabs (Patients, Providers, Appointments, Slots, Prescriptions, RefillRequests, Handoffs) and seeds them.
+3. In `.env`: `DATA_BACKEND=sheets` and `GOOGLE_SHEET_ID=<the ID from the sheet's URL>`.
+4. `uv run start_demo.py` creates the tabs (Patients, Providers, Appointments, Slots, Prescriptions,
+   RefillRequests, Handoffs) and seeds them.
 
-### Salesforce setup (optional)
+**Static demo sheet (no live connection needed):** run one demo session with `DATA_BACKEND=sheets` so the
+RefillRequests, Handoffs and Appointments tabs fill with example rows. Then File → Make a copy, remove the
+service account from the copy's sharing, and share the copy as **Anyone with the link: Viewer**. The copy is a
+frozen snapshot of what the agent logs, safe to link from a slide or this README. Synthetic data only.
 
-1. Create a Connected App with OAuth scope `api` and **Client Credentials Flow** (Run As an integration user). Store the consumer secret with `uv run keyring set patient-access salesforce-client-secret`, and put `SALESFORCE_CLIENT_ID` and `SALESFORCE_INSTANCE_URL` in `.env`.
-2. Deploy `salesforce/AssistantActionService.cls` (Developer Console → File → New → Apex Class). Give the integration user **Create** on Case and access to the class.
-3. Set `DATA_BACKEND=salesforce`. Set `SALESFORCE_CASE_ENDPOINT` only if you deploy the class under a different URL mapping.
+### Salesforce setup (optional, not running by default)
+
+A free Developer Edition org is enough. Developer orgs are deleted after a period of inactivity, so treat the
+org as disposable: these steps rebuild it in about 20 minutes.
+
+1. **Create the org:** sign up at https://developer.salesforce.com/signup. Note the org's My Domain URL
+   (Setup → My Domain); it goes in `.env` as `SALESFORCE_INSTANCE_URL`.
+2. **Load the demo data:** gear icon → Developer Console → Debug → Open Execute Anonymous Window, paste
+   `salesforce/seed_demo_data.apex` and Execute. It adds the four demo patients as Contacts and one sample Case.
+3. **Deploy the endpoint:** Developer Console → File → New → Apex Class named `AssistantActionService`, paste
+   `salesforce/AssistantActionService.cls`, save.
+4. **Create the app the agent signs in with:** a Connected App (newer orgs call this an External Client App)
+   with OAuth scope `api` and the **Client Credentials Flow** enabled, running as an integration user. Give that
+   user **Create** on Case and access to the `AssistantActionService` class.
+5. **Store its credentials:** copy the consumer key and secret from the app, then
+   `uv run keyring set patient-access salesforce-client-id` and
+   `uv run keyring set patient-access salesforce-client-secret`.
+6. **Switch the backend:** in `.env`, `DATA_BACKEND=salesforce` and `SALESFORCE_INSTANCE_URL=<My Domain URL>`.
+   Set `SALESFORCE_CASE_ENDPOINT` only if you deployed the class under a different URL mapping.
+7. **Check it:** run the demo and trigger a handoff (`I've had a headache for 3 days and my BP meds aren't
+   working`). A new Case appears under Cases in Salesforce.
+
+When the org is deleted, delete the two `salesforce-*` keychain entries too
+(`uv run keyring del patient-access salesforce-client-id`, and the same for `salesforce-client-secret`).
 
 **Model:** `claude-opus-4-6`. See *Model choice* in `DESIGN.md`.

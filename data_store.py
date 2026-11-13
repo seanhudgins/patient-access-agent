@@ -8,6 +8,7 @@ DATA_BACKEND selects the backend:
 The tools in tools.py only talk to the store returned by get_store(), so switching
 backends needs no tool changes.
 """
+import json
 import os
 
 import mock_data
@@ -126,9 +127,16 @@ class SheetsStore:
     def __init__(self):
         import gspread  # only needed for this backend
 
-        client = gspread.service_account(
-            filename=os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE", "service_account.json")
-        )
+        from credentials import GOOGLE_ACCOUNT, get_secret
+
+        # Keychain first (credentials.py store-google); a key file is the fallback.
+        key_json = get_secret(GOOGLE_ACCOUNT, "GOOGLE_SERVICE_ACCOUNT_JSON")
+        if key_json:
+            client = gspread.service_account_from_dict(json.loads(key_json))
+        else:
+            client = gspread.service_account(
+                filename=os.environ.get("GOOGLE_SERVICE_ACCOUNT_FILE", "service_account.json")
+            )
         self._book = client.open_by_key(os.environ["GOOGLE_SHEET_ID"])
 
     def _records(self, tab: str) -> list[dict]:

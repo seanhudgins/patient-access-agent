@@ -27,7 +27,7 @@ def _get_access_token() -> str:
     instance = os.environ["SALESFORCE_INSTANCE_URL"]
     data = urllib.parse.urlencode({
         "grant_type": "client_credentials",
-        "client_id": os.environ["SALESFORCE_CLIENT_ID"],
+        "client_id": get_secret("salesforce-client-id", "SALESFORCE_CLIENT_ID") or "",
         "client_secret": get_secret("salesforce-client-secret", "SALESFORCE_CLIENT_SECRET") or "",
     }).encode()
     req = urllib.request.Request(
