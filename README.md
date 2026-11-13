@@ -6,6 +6,17 @@ I built it to learn the Claude API and agent design: tool use, guardrails enforc
 
 > **Synthetic data only.** No real patient information. Not HIPAA-compliant as built; see *Healthcare considerations* and *Production readiness* in `DESIGN.md`.
 
+## How this was built
+Built with AI coding assistance (Claude Code) to learn the Claude API and agent design.
+
+- **My part:** the agent's scope and behavior (what Clara resolves, what goes to staff, how emergencies are
+  handled); the design principle that *the model decides what to say, code decides what is allowed*; the
+  guardrails that enforce it (identity checks, the late-cancellation fee, controlled substances, referrals);
+  the contact-center handoff design; and reviewing the result. The reasoning is in [DESIGN.md](DESIGN.md).
+- **The AI's part:** most of the implementation, written to that design.
+- **What I'd change for production** is listed in DESIGN.md: EHR integration, handoff into contact-center
+  queues, and an evaluation suite.
+
 ## Run it
 
 **1. Install dependencies** (Python 3.14, [uv](https://docs.astral.sh/uv/))
