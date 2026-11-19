@@ -8,6 +8,7 @@ DATA_BACKEND selects the backend:
 The tools in tools.py only talk to the store returned by get_store(), so switching
 backends needs no tool changes.
 """
+import copy
 import json
 import os
 
@@ -30,59 +31,125 @@ TABS: dict[str, list[str]] = {
     "Prescriptions": ["id", "patient_id", "medication", "prescriber", "refills_remaining", "controlled", "last_filled"],
     "RefillRequests": ["id", "patient_id", "medication", "prescriber", "pharmacy", "status", "created"],
     "Handoffs": ["id", "created", "queue", "priority", "patient_id", "caller", "callback_phone", "summary", "status"],
+    "Devices": ["patient_id", "program", "device", "connection", "last_sync", "systolic", "diastolic",
+                "weight_lb", "change_2_days_lb", "flagged"],
+    "Statements": ["statement_id", "patient_id", "visit_date", "provider_name", "location", "facility_charge",
+                   "professional_charge", "insurance_paid", "copay", "deductible", "balance_due", "due_date",
+                   "payment_plan_eligible"],
 }
 
-_BOOL_FIELDS = {"telehealth", "referral_required_for_new_patients", "controlled"}
-_INT_FIELDS = {"duration_min", "refills_remaining"}
+_BOOL_FIELDS = {"telehealth", "referral_required_for_new_patients", "controlled", "flagged", "payment_plan_eligible"}
+_INT_FIELDS = {"duration_min", "refills_remaining", "systolic", "diastolic"}
+_FLOAT_FIELDS = {"weight_lb", "change_2_days_lb", "facility_charge", "professional_charge", "insurance_paid",
+                 "copay", "deductible", "balance_due"}
+
+
+# Devices and statements are nested in mock_data.py and flat (one row each) in the Sheet.
+def _device_rows() -> list[dict]:
+    return [{"patient_id": pid, "program": d["program"], "device": d["device"], "connection": d["connection"],
+             "last_sync": d["last_sync"], "flagged": d["flagged"],
+             **{k: d["last_reading"].get(k) for k in ("systolic", "diastolic", "weight_lb", "change_2_days_lb")}}
+            for pid, devs in mock_data.HOME_DEVICES.items() for d in devs]
+
+
+def _device_from_row(r: dict) -> dict:
+    reading = {k: r[k] for k in ("systolic", "diastolic", "weight_lb", "change_2_days_lb") if r.get(k) is not None}
+    return {"program": r["program"], "device": r["device"], "connection": r["connection"], "last_sync": r["last_sync"],
+            "last_reading": {"taken": r["last_sync"], **reading}, "flagged": r["flagged"]}
+
+
+def _statement_rows() -> list[dict]:
+    rows = []
+    for pid, sts in mock_data.BILLING_STATEMENTS.items():
+        for st in sts:
+            rows.append({"statement_id": st["statement_id"], "patient_id": pid, "visit_date": st["visit_date"],
+                         "provider_name": st["provider_name"], "location": st["location"],
+                         "facility_charge": st["charges"][0]["amount"], "professional_charge": st["charges"][1]["amount"],
+                         "insurance_paid": st["insurance_paid"], "copay": st["patient_responsibility"]["copay"],
+                         "deductible": st["patient_responsibility"]["deductible"], "balance_due": st["balance_due"],
+                         "due_date": st["due_date"], "payment_plan_eligible": st["payment_plan_eligible"]})
+    return rows
+
+
+def _statement_from_row(r: dict) -> dict:
+    return {"statement_id": r["statement_id"], "visit_date": r["visit_date"], "provider_name": r["provider_name"],
+            "location": r["location"],
+            "charges": [{"type": "Facility charge (the clinic)", "amount": r["facility_charge"]},
+                        {"type": "Professional charge (the doctor's services)", "amount": r["professional_charge"]}],
+            "insurance_paid": r["insurance_paid"],
+            "patient_responsibility": {"copay": r["copay"], "deductible": r["deductible"]},
+            "balance_due": r["balance_due"], "due_date": r["due_date"], "payment_plan_eligible": r["payment_plan_eligible"]}
+
+
+_MEMORY_TABLES = ("PATIENTS", "PROVIDERS", "MOCK_APPOINTMENTS", "AVAILABLE_SLOTS",
+                  "MOCK_PRESCRIPTIONS", "MOCK_REFILL_REQUESTS", "MOCK_HANDOFFS", "HOME_DEVICES", "BILLING_STATEMENTS")
 
 
 class MemoryStore:
-    """Reads and mutates the in-memory data in mock_data.py."""
+    """Reads and mutates the in-memory data in mock_data.py.
+
+    With a session, get_store() gives each browser tab its own copy, so two people running the
+    demo at once (or a Reset in another tab) never change each other's data.
+    """
+
+    def __init__(self, private: bool = False):
+        self._own = None
+        if private:
+            self._own = {name: copy.deepcopy(getattr(mock_data, name)) for name in _MEMORY_TABLES}
+
+    def _t(self, name: str):
+        return self._own[name] if self._own is not None else getattr(mock_data, name)
 
     def patients(self) -> dict:
-        return mock_data.PATIENTS
+        return self._t("PATIENTS")
 
     def providers(self) -> dict:
-        return mock_data.PROVIDERS
+        return self._t("PROVIDERS")
 
     def appointments(self) -> dict:
-        return mock_data.MOCK_APPOINTMENTS
+        return self._t("MOCK_APPOINTMENTS")
 
     def add_appointment(self, appt: dict) -> None:
-        mock_data.MOCK_APPOINTMENTS[appt["id"]] = appt
+        self._t("MOCK_APPOINTMENTS")[appt["id"]] = appt
 
     def set_appointment_status(self, appt_id: str, status: str) -> None:
-        mock_data.MOCK_APPOINTMENTS[appt_id]["status"] = status
+        self._t("MOCK_APPOINTMENTS")[appt_id]["status"] = status
 
     def open_slots(self) -> dict[str, list[str]]:
-        return mock_data.AVAILABLE_SLOTS
+        return self._t("AVAILABLE_SLOTS")
 
     def take_slot(self, provider_id: str, start_time: str) -> bool:
-        slots = mock_data.AVAILABLE_SLOTS.get(provider_id, [])
+        slots = self._t("AVAILABLE_SLOTS").get(provider_id, [])
         if start_time not in slots:
             return False
         slots.remove(start_time)
         return True
 
     def release_slot(self, provider_id: str, start_time: str) -> None:
-        slots = mock_data.AVAILABLE_SLOTS.setdefault(provider_id, [])
+        slots = self._t("AVAILABLE_SLOTS").setdefault(provider_id, [])
         slots.append(start_time)
         slots.sort()
 
     def prescriptions(self) -> dict:
-        return mock_data.MOCK_PRESCRIPTIONS
+        return self._t("MOCK_PRESCRIPTIONS")
 
     def refill_requests(self) -> list[dict]:
-        return mock_data.MOCK_REFILL_REQUESTS
+        return self._t("MOCK_REFILL_REQUESTS")
 
     def add_refill_request(self, request: dict) -> None:
-        mock_data.MOCK_REFILL_REQUESTS.append(request)
+        self._t("MOCK_REFILL_REQUESTS").append(request)
 
     def handoffs(self) -> list[dict]:
-        return mock_data.MOCK_HANDOFFS
+        return self._t("MOCK_HANDOFFS")
 
     def add_handoff(self, handoff: dict) -> None:
-        mock_data.MOCK_HANDOFFS.append(handoff)
+        self._t("MOCK_HANDOFFS").append(handoff)
+
+    def home_devices(self, patient_id: str) -> list[dict]:
+        return self._t("HOME_DEVICES").get(patient_id, [])
+
+    def billing_statements(self, patient_id: str) -> list[dict]:
+        return self._t("BILLING_STATEMENTS").get(patient_id, [])
 
 
 # ── Google Sheets ─────────────────────────────────────────────────────────────
@@ -93,6 +160,8 @@ def _parse(field: str, value: str):
         return None
     if field in _INT_FIELDS:
         return int(float(value))
+    if field in _FLOAT_FIELDS:
+        return float(value)
     return value
 
 
@@ -114,6 +183,8 @@ def seed_rows() -> dict[str, list[list]]:
         "Prescriptions": list(mock_data.MOCK_PRESCRIPTIONS.values()),
         "RefillRequests": mock_data.MOCK_REFILL_REQUESTS,
         "Handoffs": mock_data.MOCK_HANDOFFS,
+        "Devices": _device_rows(),
+        "Statements": _statement_rows(),
     }
     return {
         tab: [fields] + [[_cell(r.get(f)) for f in fields] for r in records[tab]]
@@ -212,6 +283,12 @@ class SheetsStore:
     def add_handoff(self, handoff: dict) -> None:
         self._append("Handoffs", handoff)
 
+    def home_devices(self, patient_id: str) -> list[dict]:
+        return [_device_from_row(r) for r in self._records("Devices") if r["patient_id"] == patient_id]
+
+    def billing_statements(self, patient_id: str) -> list[dict]:
+        return [_statement_from_row(r) for r in self._records("Statements") if r["patient_id"] == patient_id]
+
     def reset(self) -> None:
         """Replace every tab's contents with fresh demo data (dates relative to today)."""
         existing = {ws.title: ws for ws in self._book.worksheets()}
@@ -230,7 +307,12 @@ class SheetsStore:
 _store = None
 
 
-def get_store():
+def get_store(session: dict | None = None):
+    """The data store. With the mock backend and a session, each session gets its own copy."""
+    if session is not None and DATA_BACKEND != "sheets":
+        if "store" not in session:
+            session["store"] = MemoryStore(private=True)
+        return session["store"]
     global _store
     if _store is None:
         _store = SheetsStore() if DATA_BACKEND == "sheets" else MemoryStore()

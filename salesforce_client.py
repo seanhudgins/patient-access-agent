@@ -6,7 +6,9 @@ so every case the assistant opens is stamped with its source.
 import json
 import os
 import re
+import socket
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -54,7 +56,7 @@ def _sf_apex_post(url_suffix: str, payload: dict) -> str:
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read())
 
 
@@ -73,5 +75,13 @@ def create_case_sf(subject: str, description: str, priority: str = "Medium") -> 
             return {"success": True, "case_number": case_number}
         return {"success": False, "error": result_str}
 
+    except (TimeoutError, socket.timeout) as e:
+        # The request may have reached Salesforce and created the case anyway. Retrying could
+        # create a duplicate, so report it as unconfirmed rather than failed.
+        return {"success": False, "unconfirmed": True, "error": f"Salesforce didn't confirm in time ({e})."}
+    except urllib.error.URLError as e:
+        if isinstance(e.reason, (TimeoutError, socket.timeout)):
+            return {"success": False, "unconfirmed": True, "error": f"Salesforce didn't confirm in time ({e.reason})."}
+        return {"success": False, "error": str(e)}
     except Exception as e:
         return {"success": False, "error": str(e)}

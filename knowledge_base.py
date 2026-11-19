@@ -9,13 +9,16 @@ KNOWLEDGE_BASE = {
         "call or text 988 (Suicide & Crisis Lifeline), available 24/7. Clara never queues an emergency."
     ),
     "hours": (
-        "Clinics: Monday-Friday 7:30am-6:00pm. Patient Access Center (phone and chat): Monday-Friday 7:00am-7:00pm, "
+        "Clinics: Monday-Friday 7:30am-6:00pm; closed Saturday and Sunday. Patient Access Center (phone and chat): Monday-Friday 7:00am-7:00pm, "
         "Saturday 8:00am-12:00pm. Nurse line callbacks happen during clinic hours. Closed on major holidays."
     ),
     "locations": (
         "Midtown Clinic, 200 Capitol Avenue (Primary Care with Dr. Chen, Orthopedics with Dr. Reyes, Dermatology with Dr. Shah, lab). "
         "Eastside Clinic, 4150 Folsom Boulevard (Primary Care with Dr. Patel, lab). "
-        "Heart & Vascular Center, 5 Riverside Drive (Cardiology with Dr. Reed)."
+        "Heart & Vascular Center, 5 Riverside Drive (Cardiology with Dr. Reed). "
+        "Location phones: Midtown 555-301-4100, Eastside 555-301-4200, Heart & Vascular 555-301-4300. "
+        "Dr. Shah (Dermatology) is seeing established patients only, not new patients. "
+        "Languages: Dr. Chen English and Mandarin; Dr. Patel English, Hindi and Gujarati; Dr. Reyes and Dr. Shah English and Spanish; Dr. Reed English."
     ),
     "parking": (
         "Midtown Clinic: free patient parking in the garage on 2nd Street; bring your ticket to the front desk for validation. "
@@ -47,7 +50,22 @@ KNOWLEDGE_BASE = {
         "The MySierra patient portal shows visit summaries, test results, and messages, and supports appointment booking. "
         "Password reset: go to mysierra.example.org, choose 'Forgot password', and enter your email; the reset link expires "
         "after 30 minutes. If you no longer have access to that email, or your account is locked after 5 failed attempts, "
-        "the Patient Access team can unlock it after verifying your identity."
+        "the Patient Access team can unlock it after verifying your identity. Proxy access: a parent, guardian or adult "
+        "the patient chooses can get their own MySierra login to help manage the patient's care; the patient sets it up "
+        "in MySierra under Sharing, or Patient Access can help."
+    ),
+    "lab_and_imaging": (
+        "Two clinics have a lab for blood work: Midtown Clinic (200 Capitol Avenue) and Eastside Clinic "
+        "(4150 Folsom Boulevard), open during clinic hours with no appointment needed when a provider has ordered "
+        "the test. X-rays and other imaging are at the Midtown Clinic and need a provider's order and an appointment."
+    ),
+    "home_monitoring": (
+        "Heart Health at Home lends enrolled patients a Bluetooth blood pressure cuff and a Bluetooth scale that send "
+        "readings to the care team through the MySierra app. If a device stops syncing: 1) open the MySierra app and keep "
+        "it open while you take a reading; 2) make sure Bluetooth is on and the phone is within 3 feet of the device; "
+        "3) replace the batteries (4 AA in the cuff, 2 AAA in the scale); 4) in the app, go to Devices, remove the device, "
+        "and pair it again by holding its Bluetooth button for 5 seconds. If it still won't sync, the program's device team can send a replacement. The care team sets each "
+        "patient's alert range and a nurse follows up on flagged readings."
     ),
     "billing": (
         "Statements are mailed and posted to the portal monthly. Interest-free payment plans are available for balances "

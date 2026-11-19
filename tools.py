@@ -1,6 +1,8 @@
 import datetime
+import re
 import json
 
+from dob import normalize_dob  # noqa: F401  (re-exported: tests and agent use tools.normalize_dob)
 from data_store import DATA_BACKEND, get_store
 from salesforce_client import create_case_sf
 
@@ -9,6 +11,7 @@ LATE_CANCEL_FEE_USD = 50.00
 MAX_SLOTS_RETURNED = 6
 MAX_VERIFY_ATTEMPTS = 3
 USE_SALESFORCE = DATA_BACKEND == "salesforce"
+PATIENT_ACCESS_PHONE = "555-301-4000"
 
 IDENTITY_ERROR = (
     "We couldn't verify the caller's identity with the details provided. "
@@ -34,17 +37,6 @@ def new_session() -> dict:
     return {"patient_id": None, "failed_verifications": 0, "messages": []}
 
 
-def normalize_dob(value: str) -> str | None:
-    """Parse a date of birth in common formats and return it as YYYY-MM-DD, or None."""
-    value = (value or "").strip()
-    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%B %d, %Y", "%b %d, %Y", "%d %B %Y"):
-        try:
-            return datetime.datetime.strptime(value, fmt).date().isoformat()
-        except ValueError:
-            continue
-    return None
-
-
 def dob_matches(provided: str, on_file: str | None) -> bool:
     normalized = normalize_dob(provided)
     return normalized is not None and normalized == on_file
@@ -52,11 +44,18 @@ def dob_matches(provided: str, on_file: str | None) -> bool:
 
 def _verified_patient(session: dict) -> dict | None:
     patient_id = session.get("patient_id")
-    return get_store().patients().get(patient_id) if patient_id else None
+    return get_store(session).patients().get(patient_id) if patient_id else None
 
 
 def _parse_start(start_time: str) -> datetime.datetime:
     return datetime.datetime.fromisoformat(start_time)
+
+
+def _when(start_time: str) -> str:
+    """Spoken date for a start time, e.g. 'Friday, November 20 at 8:00 AM'. Tools return this so the
+    model never works out a weekday itself (it got one wrong in evals)."""
+    t = _parse_start(start_time)
+    return f"{t:%A, %B} {t.day} at {t:%-I:%M %p}"
 
 
 def verify_patient(first_name: str, last_name: str, date_of_birth: str, session: dict) -> dict:
@@ -69,7 +68,7 @@ def verify_patient(first_name: str, last_name: str, date_of_birth: str, session:
     first, last = first_name.strip().lower(), last_name.strip().lower()
     match = next(
         (
-            p for p in get_store().patients().values()
+            p for p in get_store(session).patients().values()
             if p["first_name"].lower() == first and p["last_name"].lower() == last
             and dob_matches(date_of_birth, p["date_of_birth"])
         ),
@@ -97,10 +96,21 @@ def list_appointments(session: dict) -> dict:
     if patient is None:
         return {"success": False, "error": NOT_VERIFIED_ERROR}
     appointments = [
-        {k: a[k] for k in ("id", "provider_name", "specialty", "reason", "visit_type", "location", "start_time", "status")}
-        for a in sorted(get_store().appointments().values(), key=lambda a: a["start_time"])
+        {**{k: a[k] for k in ("id", "provider_name", "specialty", "reason", "visit_type", "location", "start_time", "status")},
+         "when": _when(a["start_time"])}
+        for a in sorted(get_store(session).appointments().values(), key=lambda a: a["start_time"])
         if a["patient_id"] == patient["id"]
     ]
+    # Flag appointments inside the late-cancel window. The patient sees the fee on the read-back
+    # card in this same turn, so this counts as disclosure (an acknowledgement still has to come
+    # in a later turn; see cancel_appointment).
+    now = datetime.datetime.now()
+    disclosed = session.setdefault("late_fee_disclosed", {})
+    for a in appointments:
+        hours = (_parse_start(a["start_time"]) - now).total_seconds() / 3600
+        a["late_cancel_fee_usd"] = LATE_CANCEL_FEE_USD if a["status"] == "scheduled" and 0 < hours < LATE_CANCEL_HOURS else 0.0
+        if a["late_cancel_fee_usd"]:
+            disclosed.setdefault(a["id"], session.get("turn", 0))
     return {"success": True, "appointments": appointments}
 
 
@@ -109,11 +119,12 @@ def get_availability(
     provider_name: str = None,
     earliest_date: str = None,
     visit_type: str = None,
+    session: dict | None = None,
 ) -> dict:
     if not specialty and not provider_name:
         return {"success": False, "error": "Provide a specialty or a provider name to search."}
 
-    store = get_store()
+    store = get_store(session)
     all_providers = store.providers()
     providers = [
         p for p in all_providers.values()
@@ -140,6 +151,7 @@ def get_availability(
                 "location": p["location"],
                 "telehealth_available": p["telehealth"],
                 "start_time": start,
+                "when": _when(start),
             }
             for p in providers
             for start in open_slots.get(p["id"], [])
@@ -149,18 +161,23 @@ def get_availability(
     )
     if not slots:
         return {"success": False, "error": "No open slots found in the next two weeks for that search."}
-    return {
+    result = {
         "success": True,
         "slots": slots[:MAX_SLOTS_RETURNED],
         "referral_required_for_new_patients": [p["name"] for p in providers if p["referral_required_for_new_patients"]],
     }
+    if session and session.get("channel") == "voice":
+        # On a call, two options are all a caller can hold in their head.
+        result["slots"] = result["slots"][:2]
+        result["note"] = "Phone call: only the first two openings are shown. If neither works, search again with a later earliest_date."
+    return result
 
 
 def book_appointment(provider_id: str, start_time: str, reason: str, session: dict, visit_type: str = "in_person") -> dict:
     patient = _verified_patient(session)
     if patient is None:
         return {"success": False, "error": NOT_VERIFIED_ERROR}
-    store = get_store()
+    store = get_store(session)
     provider_id = provider_id.strip().upper()
     providers = store.providers()
     if provider_id not in providers:
@@ -210,14 +227,14 @@ def book_appointment(provider_id: str, start_time: str, reason: str, session: di
         if visit_type == "telehealth"
         else "Please arrive 15 minutes early with a photo ID and insurance card."
     )
-    return {"success": True, "appointment": appt, "instructions": instructions}
+    return {"success": True, "appointment": {**appt, "when": _when(appt["start_time"])}, "instructions": instructions}
 
 
 def cancel_appointment(appointment_id: str, session: dict, acknowledge_late_fee: bool = False) -> dict:
     patient = _verified_patient(session)
     if patient is None:
         return {"success": False, "error": NOT_VERIFIED_ERROR}
-    store = get_store()
+    store = get_store(session)
     appointment_id = appointment_id.strip().upper()
     appt = store.appointments().get(appointment_id)
     # Another patient's appointment is reported as not found, so its existence isn't disclosed
@@ -232,14 +249,20 @@ def cancel_appointment(appointment_id: str, session: dict, acknowledge_late_fee:
     if hours_until <= 0:
         return {"success": False, "error": f"Appointment {appointment_id} has already started or passed."}
     is_late = hours_until < LATE_CANCEL_HOURS
-    if is_late and not acknowledge_late_fee:
+    # An acknowledgement only counts if the fee was disclosed in an earlier turn, so the patient
+    # has actually seen it. Without this the model could disclose and accept in the same breath.
+    disclosed = session.setdefault("late_fee_disclosed", {})
+    seen_earlier = appointment_id in disclosed and disclosed[appointment_id] < session.get("turn", 0)
+    if is_late and not (acknowledge_late_fee and seen_earlier):
+        disclosed.setdefault(appointment_id, session.get("turn", 0))
         return {
             "success": False,
             "requires_acknowledgement": True,
             "error": (
                 f"Appointment {appointment_id} is less than {LATE_CANCEL_HOURS} hours away. "
                 f"Cancelling now incurs a ${LATE_CANCEL_FEE_USD:.2f} late-cancellation fee. "
-                "Confirm the patient accepts the fee, then call again with acknowledge_late_fee=true."
+                "Tell the patient about the fee in your reply and ask if they accept it. Call again with "
+                "acknowledge_late_fee=true only after they explicitly agree to the fee in a later message."
             ),
         }
 
@@ -249,16 +272,52 @@ def cancel_appointment(appointment_id: str, session: dict, acknowledge_late_fee:
     return {
         "success": True,
         "appointment_id": appointment_id,
-        "message": f"Appointment {appointment_id} with {appt['provider_name']} on {appt['start_time']} has been cancelled.",
+        "message": f"Appointment {appointment_id} with {appt['provider_name']} on {_when(appt['start_time'])} has been cancelled.",
         "late_cancellation_fee_usd": LATE_CANCEL_FEE_USD if is_late else 0.00,
     }
+
+
+def get_home_device_status(session: dict) -> dict:
+    """The verified patient's home-monitoring devices (blood pressure cuff, scale): connection, last
+    sync, last reading, and whether the care team's alert range flagged it."""
+    patient = _verified_patient(session)
+    if patient is None:
+        return {"success": False, "error": NOT_VERIFIED_ERROR}
+    devices = get_store(session).home_devices(patient["id"])
+    if not devices:
+        return {"success": False, "error": "This patient isn't enrolled in a home-monitoring program."}
+    now = datetime.datetime.now()
+    return {"success": True, "program": devices[0]["program"], "devices": [
+        {**d, "days_since_sync": (now - _parse_start(d["last_sync"])).days} for d in devices]}
+
+
+def get_billing_statement(session: dict) -> dict:
+    """The verified patient's open statements with the charge breakdown."""
+    patient = _verified_patient(session)
+    if patient is None:
+        return {"success": False, "error": NOT_VERIFIED_ERROR}
+    statements = get_store(session).billing_statements(patient["id"])
+    return {"success": True, "statements": statements,
+            "note": "Explain only. Never take card or bank details; payments happen in the portal or with billing."}
+
+
+def list_prescriptions(session: dict) -> dict:
+    """The verified patient's prescriptions on file, for the refill picker."""
+    patient = _verified_patient(session)
+    if patient is None:
+        return {"success": False, "error": NOT_VERIFIED_ERROR}
+    meds = [
+        {k: r[k] for k in ("id", "medication", "prescriber", "refills_remaining", "controlled", "last_filled")}
+        for r in get_store(session).prescriptions().values() if r["patient_id"] == patient["id"]
+    ]
+    return {"success": True, "prescriptions": meds}
 
 
 def submit_refill_request(medication: str, session: dict) -> dict:
     patient = _verified_patient(session)
     if patient is None:
         return {"success": False, "error": NOT_VERIFIED_ERROR}
-    store = get_store()
+    store = get_store(session)
     on_file = [r for r in store.prescriptions().values() if r["patient_id"] == patient["id"]]
     if not on_file:
         return {"success": False, "error": "This patient has no active prescriptions on file."}
@@ -305,6 +364,19 @@ def submit_refill_request(medication: str, session: dict) -> dict:
     }
 
 
+def _handoff_failed(unconfirmed: bool, detail: str) -> dict:
+    """A handoff that didn't go through, or whose result is unknown. Either way: don't retry
+    (a retry after an unconfirmed write can create a duplicate case), give the patient the phone number."""
+    status = "may not have gone through" if unconfirmed else "didn't go through"
+    return {
+        "success": False,
+        "retry": False,
+        "error": (f"The handoff {status} ({detail}). Do not call handoff_to_staff again for this request. "
+                  f"Apologize, say you couldn't confirm it reached the team, and give the Patient Access "
+                  f"Center number, {PATIENT_ACCESS_PHONE}."),
+    }
+
+
 def handoff_to_staff(
     queue: str,
     summary: str,
@@ -315,7 +387,7 @@ def handoff_to_staff(
 ) -> dict:
     if queue not in HANDOFF_QUEUES:
         return {"success": False, "error": f"Unknown queue '{queue}'. Use one of: {', '.join(HANDOFF_QUEUES)}."}
-    store = get_store()
+    store = get_store(session)
     patient = _verified_patient(session)
     # Staff can't follow up with an unverified caller unless they know who to call
     if patient is None and not (caller_name and callback_phone):
@@ -346,11 +418,14 @@ def handoff_to_staff(
             priority={"urgent": "High", "high": "High"}.get(priority, "Medium"),
         )
         if not result["success"]:
-            return result
+            return _handoff_failed(result.get("unconfirmed", False), result.get("error", ""))
         handoff["id"] = result["case_number"]
     else:
-        handoff["id"] = f"HO-{len(store.handoffs()) + 1001}"
-        store.add_handoff(handoff)
+        try:
+            handoff["id"] = f"HO-{len(store.handoffs()) + 1001}"
+            store.add_handoff(handoff)
+        except Exception as e:  # e.g. a Sheets timeout: the row may or may not have been written
+            return _handoff_failed(True, str(e))
 
     return {
         "success": True,
@@ -376,7 +451,7 @@ TOOL_SCHEMAS = [
                 "last_name": {"type": "string"},
                 "date_of_birth": {
                     "type": "string",
-                    "description": "Date of birth as YYYY-MM-DD. Ask the caller for it; never guess.",
+                    "description": "Date of birth as YYYY-MM-DD, or exactly as the caller said it if you're unsure how to convert it (common written and spoken forms are understood). Ask the caller for it; never guess.",
                 },
             },
             "required": ["first_name", "last_name", "date_of_birth"],
@@ -431,12 +506,39 @@ TOOL_SCHEMAS = [
         },
     },
     {
+        "name": "list_prescriptions",
+        "description": (
+            "List the verified patient's prescriptions on file (medication, prescriber, refills remaining, and "
+            "whether it's a controlled substance). Call it when a patient wants a refill but hasn't named one "
+            "medication; the screen shows them as buttons to tap."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_home_device_status",
+        "description": (
+            "Look up the verified patient's Heart Health at Home devices (blood pressure cuff and scale): whether each "
+            "is syncing, when it last synced, the last reading, and whether the care team's alert range flagged it. "
+            "Use when a patient says a device isn't sending readings or asks about the program."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "get_billing_statement",
+        "description": (
+            "Get the verified patient's open billing statements: visit, facility and professional charges, what "
+            "insurance paid, copay and deductible, balance due, and payment-plan eligibility. Use to explain a bill."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "cancel_appointment",
         "description": (
             "Cancel one of the verified patient's scheduled appointments. "
             "IMPORTANT: Only call this after you have read back the appointment details and the patient has explicitly confirmed. "
             f"Appointments less than {LATE_CANCEL_HOURS} hours away carry a ${LATE_CANCEL_FEE_USD:.0f} late-cancellation fee: "
-            "explain it, and set acknowledge_late_fee=true only after the patient agrees."
+            "state the fee in your reply, and set acknowledge_late_fee=true only after the patient explicitly agrees "
+            "to the fee in a later message. A plain 'yes' to cancelling is not agreement to the fee."
         ),
         "input_schema": {
             "type": "object",
@@ -514,12 +616,16 @@ TOOL_DISPATCH = {
     "cancel_appointment": cancel_appointment,
     "submit_refill_request": submit_refill_request,
     "handoff_to_staff": handoff_to_staff,
+    "get_home_device_status": get_home_device_status,
+    "get_billing_statement": get_billing_statement,
+    "list_prescriptions": list_prescriptions,
 }
 
 # Tools that read the conversation's session (verified patient) from the agent, not from the model
 _SESSION_TOOLS = {
-    "verify_patient", "list_appointments", "book_appointment", "cancel_appointment",
-    "submit_refill_request", "handoff_to_staff",
+    "verify_patient", "list_appointments", "get_availability", "book_appointment", "cancel_appointment",
+    "submit_refill_request", "handoff_to_staff", "get_home_device_status", "get_billing_statement",
+    "list_prescriptions",
 }
 
 

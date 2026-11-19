@@ -17,3 +17,4 @@ service_account.json
 
 # Local Claude Code settings
 .claude/settings.local.json
+evals/results/

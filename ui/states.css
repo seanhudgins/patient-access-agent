@@ -1,0 +1,41 @@
+/* Body-level states toggled by clara.js (drawer open, presenter mode).
+   Loaded through launch(head=...) as-is, not through css=: Gradio copies css= rules under
+   ".gradio-container.gradio-container-N .contain", which outranks body-class selectors and
+   drops them inside media queries. Doubled ids keep these above those prefixed copies. */
+body.clara-open #clara-drawer#clara-drawer { transform: none; }
+body.clara-open #svh-home#svh-home .svh-launcher { display: none; }
+body.presenter #clara-drawer#clara-drawer { --svh-drawer: 880px; }
+body.presenter #clara-presenter-col#clara-presenter-col { display: block !important; }
+body.presenter #clara-verified#clara-verified .svh-pres-only { display: inline-flex; }
+body.presenter #svh-home#svh-home .svh-presenter-toggle { color: var(--svh-pine); }
+
+@media (max-width: 1100px) {
+  body.presenter #clara-drawer#clara-drawer { --svh-drawer: 100vw; }
+}
+@media (max-width: 768px) {
+  body.presenter #clara-body#clara-body { flex-direction: column !important; }
+  body.presenter #clara-presenter-col#clara-presenter-col { border-left: 0; border-top: 1px solid var(--svh-line); max-height: 45vh; }
+}
+
+/* Keep the chat box on screen in a long conversation. Gradio rows default to align-items:
+   flex-start, which let the chat column grow past the drawer and push the input out of view. */
+#clara-body#clara-body { align-items: stretch !important; }
+#clara-chat-col#clara-chat-col { align-self: stretch !important; height: auto !important; max-height: 100% !important; }
+#clara-chat#clara-chat { flex: 1 1 0 !important; min-height: 0 !important; }
+#clara-input-row#clara-input-row { flex: none !important; }
+
+/* Channels (set by clara.js): same drawer, different door. */
+body.channel-voice #clara-drawer#clara-drawer .clara-channel-bar,
+body.channel-sms #clara-drawer#clara-drawer .clara-channel-bar,
+body.channel-portal #clara-drawer#clara-drawer .clara-channel-bar { display: flex; }
+body.channel-voice #clara-drawer#clara-drawer .clara-mic { display: inline-flex; }
+body.channel-voice #clara-drawer#clara-drawer .clara-channel-dot { background: var(--svh-alert); animation: svh-pulse 1.4s infinite; }
+/* Text message: a phone-style thread. */
+body.channel-sms #clara-chat#clara-chat .message-row.bot-row .message { background: #E9E9EB !important; border-radius: 18px 18px 18px 4px !important; }
+body.channel-sms #clara-chat#clara-chat .message-row.user-row .message { background: var(--svh-pine) !important; border-radius: 18px 18px 4px 18px !important; }
+body.channel-sms #clara-chat#clara-chat .message { font-size: 15px !important; }
+body.channel-sms #clara-chat#clara-chat .avatar-container { display: none !important; }
+/* Portal: MySierra branding on the bar. */
+body.channel-portal #clara-drawer#clara-drawer .clara-channel-bar { background: var(--svh-sky); }
+@keyframes svh-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { body.channel-voice #clara-drawer#clara-drawer .clara-channel-dot { animation: none; } }

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400" role="img" aria-label="Map of Sierra Valley Health locations">
+  <rect width="600" height="400" fill="#E7F0F6"/>
+  <path d="M0 0h600v70C520 110 470 60 400 90S260 60 180 100 60 80 0 120z" fill="#D5E3D8"/>
+  <path d="M0 400h600v-80c-80-30-150 10-230-20s-160 20-240-10S30 300 0 320z" fill="#D5E3D8"/>
+  <path d="M-10 250C80 230 140 280 230 250S380 170 470 200 560 180 610 160" fill="none" stroke="#9CC3DE" stroke-width="14" stroke-linecap="round"/>
+  <g stroke="#FFFFFF" stroke-width="5" fill="none" opacity=".9"><path d="M60 330L250 140 560 120"/><path d="M120 60L330 300"/></g>
+  <g font-family="Public Sans, system-ui, sans-serif" font-size="15" font-weight="700" fill="#0B2545">
+    <g transform="translate(210 160)"><path d="M0 0c-12-14-18-22-18-30a18 18 0 0 1 36 0c0 8-6 16-18 30z" fill="#0B2545"/><circle cy="-30" r="7" fill="#F2B33D"/><text x="24" y="-24">Midtown Clinic</text></g>
+    <g transform="translate(420 230)"><path d="M0 0c-12-14-18-22-18-30a18 18 0 0 1 36 0c0 8-6 16-18 30z" fill="#0B2545"/><circle cy="-30" r="7" fill="#F2B33D"/><text x="24" y="-24">Eastside Clinic</text></g>
+    <g transform="translate(300 320)"><path d="M0 0c-12-14-18-22-18-30a18 18 0 0 1 36 0c0 8-6 16-18 30z" fill="#0B2545"/><circle cy="-30" r="7" fill="#F2B33D"/><text x="24" y="-24">Heart &amp; Vascular Center</text></g>
+  </g>
+  <text x="560" y="385" text-anchor="end" font-family="Public Sans, system-ui, sans-serif" font-size="12" fill="#5B6573">Stylized map, not to scale</text>
+</svg>

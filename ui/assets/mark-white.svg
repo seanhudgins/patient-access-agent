@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" role="img" aria-label="Sierra Valley Health">
+  <path d="M0 0h32a8 8 0 0 1 8 8v24a8 8 0 0 1-8 8H8a8 8 0 0 1-8-8z" fill="#fff"/>
+  <circle cx="27" cy="13" r="4" fill="#F2B33D"/>
+  <path d="M5 30l9-11 5 6 5-8 11 13" fill="none" stroke="#0B2545" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
