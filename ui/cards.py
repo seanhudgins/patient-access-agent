@@ -6,7 +6,9 @@ writes (never user text without escaping), so the chatbot can render it with san
 import datetime
 from html import escape
 
+from constants import LATE_CANCEL_FEE_TEXT, LATE_CANCEL_FEE_USD, LATE_CANCEL_HOURS
 from data_store import get_store
+from tools import clock
 from ui.icons import icon
 
 QUEUE_LABELS = {
@@ -24,7 +26,7 @@ def _when(iso: str) -> str:
         dt = datetime.datetime.fromisoformat(iso)
     except (TypeError, ValueError):
         return escape(str(iso))
-    return dt.strftime("%a %-d %b · %-I:%M %p")
+    return f"{dt:%a} {dt.day} {dt:%b} · {clock(dt)}"  # portable: %-d / %-I fail on Windows
 
 
 def _provider_name(provider_id: str | None) -> str | None:
@@ -154,10 +156,11 @@ def readback_cancel(event: dict, session: dict | None = None) -> str:
         rows = (f"<dt>Visit</dt><dd>{escape(a['provider_name'])} · {escape(a['specialty'])}</dd>"
                 f"<dt>When</dt><dd>{_when(a['start_time'])}</dd><dt>Where</dt><dd>{escape(a['location'])}</dd>")
     if result.get("requires_acknowledgement"):
-        rows += '<dt>Late fee</dt><dd><span class="fee">$50.00 (less than 24 hours away)</span></dd>'
+        rows += (f'<dt>Late fee</dt><dd><span class="fee">${LATE_CANCEL_FEE_USD:.2f} '
+                 f'(less than {LATE_CANCEL_HOURS} hours away)</span></dd>')
     actions = (
         '<div class="row-actions">'
-        '<button type="button" class="svh-btn primary" data-clara-prompt="Yes, I accept the $50 fee. Please cancel it.">Confirm cancellation</button>'
+        f'<button type="button" class="svh-btn primary" data-clara-prompt="Yes, I accept the {LATE_CANCEL_FEE_TEXT} fee. Please cancel it.">Confirm cancellation</button>'
         '<button type="button" class="svh-btn ghost" data-clara-prompt="Never mind, keep my appointment.">Keep it</button></div>'
     )
     return _card("readback", "Before I cancel", "calendar", f'<dl class="clara-kv">{rows}</dl>{actions}')
@@ -179,8 +182,10 @@ def readback_from_list(result: dict, reply: str) -> str:
             hours = (datetime.datetime.fromisoformat(a["start_time"]) - now).total_seconds() / 3600
         except (TypeError, ValueError):
             hours = 999
-        fee = ('<dt>Late fee</dt><dd><span class="fee">$50.00 if cancelled now (less than 24 hours away)</span></dd>'
-               if 0 < hours < 24 else '<dt>Late fee</dt><dd>None (more than 24 hours away)</dd>')
+        fee = (f'<dt>Late fee</dt><dd><span class="fee">${LATE_CANCEL_FEE_USD:.2f} if cancelled now (less than '
+               f'{LATE_CANCEL_HOURS} hours away)</span></dd>'
+               if 0 < hours < LATE_CANCEL_HOURS else
+               f'<dt>Late fee</dt><dd>None (more than {LATE_CANCEL_HOURS} hours away)</dd>')
         rows = (f"<dt>Visit</dt><dd>{escape(a['provider_name'])} · {escape(a['specialty'])}</dd>"
                 f"<dt>When</dt><dd>{_when(a['start_time'])}</dd><dt>Where</dt><dd>{escape(a['location'])}</dd>{fee}"
                 f'<dt>ID</dt><dd class="record-id">{escape(a["id"])}</dd>')

@@ -5,12 +5,13 @@ Every button that talks to Clara sends a generic request that matches its label.
 """
 from html import escape
 
+from constants import PATIENT_ACCESS_PHONE
 from data_store import get_store
 from ui.icons import icon
 from ui.site_data import LOCATIONS, PROVIDER_PROFILES, SPECIALTIES
 
 ASSET = "/gradio_api/file=ui/assets"
-PHONE = "555-301-4000"
+PHONE = PATIENT_ACCESS_PHONE
 
 
 def _prompt(text: str) -> str:

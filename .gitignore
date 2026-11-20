@@ -18,3 +18,6 @@ service_account.json
 # Local Claude Code settings
 .claude/settings.local.json
 evals/results/
+
+# Device-trust draft state (docs/drafts/device_trust.py)
+trusted_devices.json

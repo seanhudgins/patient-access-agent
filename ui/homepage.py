@@ -5,13 +5,14 @@ message (one code path for all of them). Prompts are word for word from "Things 
 """
 from html import escape
 
+from constants import PATIENT_ACCESS_PHONE
 from data_store import get_store
-from ui.icons import icon
 from ui.directory import directory_html
+from ui.icons import icon
 from ui.pages import pages_html
 
 ASSET = "/gradio_api/file=ui/assets"
-PHONE = "555-301-4000"
+PHONE = PATIENT_ACCESS_PHONE
 
 
 def _prompt(text: str) -> str:
@@ -271,7 +272,7 @@ def _locations() -> str:
       <p>{escape(a)} · {escape(s)}</p>
       <p>Mon–Fri 7:30 am–6:00 pm · {escape(park)}</p>
       <p style="margin-top:10px">{_link("Ask Clara for directions", prompt)} · <a class="svh-link" href="#/locations/{slug}">Location details</a></p>
-    </div></article>""" for (n, a, s, park, prompt), slug in zip(locs, ["midtown", "eastside", "heart-vascular"]))
+    </div></article>""" for (n, a, s, park, prompt), slug in zip(locs, ["midtown", "eastside", "heart-vascular"], strict=True))
     return f"""
 <section class="svh-section white" id="locations"><div class="svh-wrap">
   <p class="svh-eyebrow">Locations</p>

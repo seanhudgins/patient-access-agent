@@ -216,7 +216,7 @@ class SheetsStore:
             return []
         header, *body = rows
         return [
-            {field: _parse(field, value) for field, value in zip(header, row)}
+            {field: _parse(field, value) for field, value in zip(header, row, strict=False)}  # short rows: trailing blanks
             for row in body if any(row)
         ]
 

@@ -6,6 +6,7 @@ outside the demo (portal, bill pay, careers) say so plainly and offer Clara inst
 """
 from html import escape
 
+from constants import PATIENT_ACCESS_PHONE
 from knowledge_base import KNOWLEDGE_BASE as KB
 from ui.icons import icon
 
@@ -68,8 +69,8 @@ def pages_html() -> str:
         _panel("Prescription refills", KB["prescription_refills"], _ask("Request a refill", "I'd like to refill a prescription", False), "pill"),
     ])
     providers = "".join([
-        _panel("Refer a patient", "Referring offices can send referrals to Sierra Valley Patient Access at 555-301-4000. "
-               "Orthopedics and Cardiology need a referral for new patients.", '<a class="svh-btn ghost" href="tel:555-301-4000">Call Patient Access</a>', "building"),
+        _panel("Refer a patient", f"Referring offices can send referrals to Sierra Valley Patient Access at {PATIENT_ACCESS_PHONE}. "
+               "Orthopedics and Cardiology need a referral for new patients.", f'<a class="svh-btn ghost" href="tel:{PATIENT_ACCESS_PHONE}">Call Patient Access</a>', "building"),
         _panel("Our locations", KB["locations"], '<a class="svh-btn ghost" href="#locations">See locations</a>', "map-pin"),
     ]) + _demo_note("A provider portal")
     portal = _demo_note("The MySierra patient portal") + _panel(

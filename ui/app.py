@@ -10,9 +10,10 @@ from html import escape
 import gradio as gr
 
 import mock_data
-from agent import _EMERGENCY_PATTERN, chat, redact_payment_details
-from data_store import DATA_BACKEND, get_store
+import safety
 import tools
+from agent import chat
+from data_store import DATA_BACKEND, get_store
 from tools import new_session
 from ui import cards, presenter
 from ui.homepage import drawer_head_html, homepage_html
@@ -76,7 +77,7 @@ def prep_turn(message: str, history: list[dict]):
     if not message or not message.strip():
         return history, "", ""
     history = list(history or []) + [
-        {"role": "user", "content": escape(redact_payment_details(message.strip()))},
+        {"role": "user", "content": escape(safety.redact_payment_details(message.strip()))},
         {"role": "assistant", "content": TYPING_HTML},
     ]
     return history, "", message.strip()
@@ -87,7 +88,7 @@ def run_turn(message: str, history: list[dict], session: dict, turns: list[dict]
     if not message:
         yield history, gr.skip(), gr.skip(), turns
         return
-    redacted = redact_payment_details(message)
+    redacted = safety.redact_payment_details(message)
     card_removed, message = redacted != message, redacted  # nothing downstream sees a card number
     base = list(history[:-1])  # drop the typing dots
     events: list[dict] = []
@@ -98,11 +99,12 @@ def run_turn(message: str, history: list[dict], session: dict, turns: list[dict]
             status = [] if session.get("channel") in TEXT_ONLY else _status_messages(events)
             if status:
                 yield base + status + [{"role": "assistant", "content": TYPING_HTML}], gr.skip(), gr.skip(), turns
-    except Exception as exc:  # API outage, rate limit, network: keep the demo standing
+    except Exception as exc:  # chat() already handles API errors; this keeps the demo standing if the UI layer fails
         print(f"chat failed: {exc!r}", flush=True)
-        reply = ("Sorry, I'm having trouble connecting right now. Please try again in a moment, "
-                 "or call Patient Access at 555-301-4000.")
-    emergency = bool(_EMERGENCY_PATTERN.search(message))
+        reply = safety.trouble_reply(session.get("channel"))
+    emergency = safety.is_emergency(message)
+    if emergency:
+        reply = safety.with_emergency_notice(reply, session.get("channel"))  # no-op if chat() already added it
     text_only = session.get("channel") in TEXT_ONLY
     # Backstop for the refill picker: if Clara asks which medication without having looked them up,
     # look them up here so the one-tap picker always appears for a verified patient.
@@ -118,7 +120,9 @@ def run_turn(message: str, history: list[dict], session: dict, turns: list[dict]
         turn_cards.append({"role": "assistant", "content": cards.quick_replies(quick)})
     if card_removed:
         turn_cards.insert(0, {"role": "assistant", "content": cards.card_removed_notice()})
-    text = [{"role": "assistant", "content": reply or "Sorry, I wasn't able to respond. Please try again."}]
+    # The model's words are escaped: the chatbot renders HTML (for the server-built cards), so a reply
+    # must never be able to inject markup. Markdown still renders.
+    text = [{"role": "assistant", "content": escape(reply or safety.trouble_reply(session.get("channel")), quote=False)}]
     body = turn_cards + text if emergency else text + turn_cards
     turns = turns + [presenter.build_turn(message, events, reply, emergency, session.get("channel", "web"))]
     yield base + ([] if text_only else _status_messages(events)) + body, cards.verified_chip(session), presenter.render(turns), turns
@@ -152,7 +156,7 @@ def build_interface() -> gr.Blocks:
                         value=_welcome(),
                         elem_id="clara-chat",
                         show_label=False,
-                        sanitize_html=False,  # only server-written card HTML; user text is escaped in prep_turn
+                        sanitize_html=False,  # only server-written card HTML; user text and Clara's reply are escaped
                         avatar_images=(None, "ui/assets/clara-avatar.svg"),
                         buttons=[],
                         layout="bubble",

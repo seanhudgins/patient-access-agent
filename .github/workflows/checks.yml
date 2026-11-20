@@ -1,0 +1,52 @@
+# Runs on every push and pull request: secret scan, lint, the offline guardrail tests on Linux and
+# Windows, and (private repo only) the public-copy scan. No step calls a model or needs a key.
+# Third-party code is pinned: actions by commit SHA, gitleaks by version + published checksum.
+name: checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0  # full history, so the secret scan covers every commit
+
+      - name: Secret scan (gitleaks, whole history)
+        env:
+          GITLEAKS_VERSION: "8.30.1"
+        run: |
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          file="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$file" "$base/$file"
+          curl -sSfL -o checksums.txt "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          grep " $file\$" checksums.txt | sha256sum -c -
+          tar -xzf "$file" gitleaks
+          ./gitleaks git . --no-banner --redact
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+
+      - name: Lint (ruff, version from uv.lock)
+        run: uv run --locked ruff check .
+
+      - name: Guardrail tests (pytest, offline)
+        run: uv run --locked pytest -q
+
+      - name: Public-copy scan (private repo only)
+        if: hashFiles('publish/publish.py') != ''
+        run: python3 -I publish/publish.py --check
+
+  windows-tests:
+    # Catch Windows-only bugs (date formats, paths, encodings) before the home PC does.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+      - name: Guardrail tests (pytest, offline)
+        run: uv run --locked pytest -q

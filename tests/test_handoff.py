@@ -5,7 +5,6 @@ creation as failed; this guards the code side of that.)
 Run: uv run python tests/test_handoff.py
 """
 import pathlib
-import socket
 import sys
 import urllib.request
 
@@ -23,7 +22,7 @@ def _verified() -> dict:
 
 def test_salesforce_timeout_is_unconfirmed(monkeypatch=None):
     real_open, real_token = urllib.request.urlopen, salesforce_client._get_access_token
-    urllib.request.urlopen = lambda *a, **k: (_ for _ in ()).throw(socket.timeout("timed out"))
+    urllib.request.urlopen = lambda *a, **k: (_ for _ in ()).throw(TimeoutError("timed out"))
     salesforce_client._get_access_token = lambda: "token"
     import os
     os.environ.setdefault("SALESFORCE_INSTANCE_URL", "https://example.invalid")

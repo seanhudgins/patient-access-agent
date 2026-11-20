@@ -6,6 +6,7 @@ wrote, and guardrail tags. Built from the same events as the patient cards.
 import json
 from html import escape
 
+from constants import LATE_CANCEL_FEE_TEXT, LATE_CANCEL_HOURS
 from ui.cards import QUEUE_LABELS, WRITE_TOOLS
 
 MAX_VERIFY_ATTEMPTS = 3
@@ -110,7 +111,7 @@ def _decision(results: list[dict], reply: str, emergency: bool) -> tuple[str, st
         if any(e["result"].get("requires_referral") for e in results):
             return "ask", "Ask", "Authorization check: no referral on file, so no wasted specialist visit. Offering the ways forward"
         if any(e["result"].get("requires_acknowledgement") for e in results):
-            return "ask", "Ask", "Late cancellation: needs the patient's OK on the $50 fee"
+            return "ask", "Ask", f"Late cancellation: needs the patient's own yes to the {LATE_CANCEL_FEE_TEXT} fee (recorded by code, not the model)"
         if results:
             return "ask", "Ask", "Looked things up; needs one choice or detail from the patient"
         return "ask", "Ask", "Request is ambiguous or needs identity: one question at a time"
@@ -183,7 +184,7 @@ TRUST = [
     "No clinical advice: symptoms and medication questions go to a nurse",
     "Every message is checked for emergency language",
     "Controlled substances are never refilled by the agent",
-    "Cancelling within 24 hours is blocked until the $50 fee is acknowledged",
+    f"Cancelling within {LATE_CANCEL_HOURS} hours is blocked until the patient says yes to the {LATE_CANCEL_FEE_TEXT} fee they were shown",
 ]
 
 

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Work reaches main through a pull request, after CI passes. Turn on once per clone:
+#   git config core.hooksPath .githooks
+# To push straight to main anyway (Sean only, on purpose): ALLOW_PUSH_TO_MAIN=1 git push
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+    if [ "$remote_ref" = "refs/heads/main" ] && [ "${ALLOW_PUSH_TO_MAIN:-}" != "1" ]; then
+        echo "Push to main blocked: open a pull request and merge after CI passes." >&2
+        echo "Override on purpose with: ALLOW_PUSH_TO_MAIN=1 git push" >&2
+        exit 1
+    fi
+done
+exit 0

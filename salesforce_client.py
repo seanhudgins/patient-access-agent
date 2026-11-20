@@ -75,7 +75,7 @@ def create_case_sf(subject: str, description: str, priority: str = "Medium") -> 
             return {"success": True, "case_number": case_number}
         return {"success": False, "error": result_str}
 
-    except (TimeoutError, socket.timeout) as e:
+    except TimeoutError as e:
         # The request may have reached Salesforce and created the case anyway. Retrying could
         # create a duplicate, so report it as unconfirmed rather than failed.
         return {"success": False, "unconfirmed": True, "error": f"Salesforce didn't confirm in time ({e})."}

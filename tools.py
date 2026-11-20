@@ -1,17 +1,17 @@
 import datetime
-import re
 import json
 
-from dob import normalize_dob  # noqa: F401  (re-exported: tests and agent use tools.normalize_dob)
+from constants import LATE_CANCEL_FEE_TEXT, LATE_CANCEL_FEE_USD, LATE_CANCEL_HOURS, PATIENT_ACCESS_PHONE
 from data_store import DATA_BACKEND, get_store
+from dob import normalize_dob  # noqa: F401  (re-exported: tests and agent use tools.normalize_dob)
 from salesforce_client import create_case_sf
 
-LATE_CANCEL_HOURS = 24
-LATE_CANCEL_FEE_USD = 50.00
 MAX_SLOTS_RETURNED = 6
 MAX_VERIFY_ATTEMPTS = 3
 USE_SALESFORCE = DATA_BACKEND == "salesforce"
-PATIENT_ACCESS_PHONE = "555-301-4000"
+HANDOFF_PRIORITIES = ("normal", "high", "urgent")
+# Providers who aren't taking new patients: a patient with no earlier visit can't be booked.
+ESTABLISHED_PATIENTS_ONLY = {"PRV-05"}  # Dr. Shah (Dermatology); also stated in knowledge_base.py
 
 IDENTITY_ERROR = (
     "We couldn't verify the caller's identity with the details provided. "
@@ -55,7 +55,12 @@ def _when(start_time: str) -> str:
     """Spoken date for a start time, e.g. 'Friday, November 20 at 8:00 AM'. Tools return this so the
     model never works out a weekday itself (it got one wrong in evals)."""
     t = _parse_start(start_time)
-    return f"{t:%A, %B} {t.day} at {t:%-I:%M %p}"
+    return f"{t:%A, %B} {t.day} at {clock(t)}"
+
+
+def clock(t: datetime.datetime) -> str:
+    """'8:00 AM'. Portable: %-I (no leading zero) doesn't exist on Windows."""
+    return f"{t.hour % 12 or 12}:{t:%M %p}"
 
 
 def verify_patient(first_name: str, last_name: str, date_of_birth: str, session: dict) -> dict:
@@ -101,16 +106,13 @@ def list_appointments(session: dict) -> dict:
         for a in sorted(get_store(session).appointments().values(), key=lambda a: a["start_time"])
         if a["patient_id"] == patient["id"]
     ]
-    # Flag appointments inside the late-cancel window. The patient sees the fee on the read-back
-    # card in this same turn, so this counts as disclosure (an acknowledgement still has to come
-    # in a later turn; see cancel_appointment).
+    # Flag appointments inside the late-cancel window. This is information for Clara only: listing
+    # is not disclosure. The fee counts as disclosed when code has put it in a reply the patient saw
+    # (safety.ensure_fee_disclosed), after cancel_appointment asks for agreement.
     now = datetime.datetime.now()
-    disclosed = session.setdefault("late_fee_disclosed", {})
     for a in appointments:
         hours = (_parse_start(a["start_time"]) - now).total_seconds() / 3600
         a["late_cancel_fee_usd"] = LATE_CANCEL_FEE_USD if a["status"] == "scheduled" and 0 < hours < LATE_CANCEL_HOURS else 0.0
-        if a["late_cancel_fee_usd"]:
-            disclosed.setdefault(a["id"], session.get("turn", 0))
     return {"success": True, "appointments": appointments}
 
 
@@ -186,12 +188,22 @@ def book_appointment(provider_id: str, start_time: str, reason: str, session: di
     if visit_type == "telehealth" and not provider["telehealth"]:
         return {"success": False, "error": f"{provider['name']} does not offer telehealth visits."}
 
+    seen_before = any(
+        a["patient_id"] == patient["id"] and a["provider_id"] == provider_id and a["status"] != "cancelled"
+        for a in store.appointments().values()
+    )
+    if provider_id in ESTABLISHED_PATIENTS_ONLY and not seen_before:
+        return {
+            "success": False,
+            "established_patients_only": True,
+            "error": (
+                f"{provider['name']} ({provider['specialty']}) is seeing established patients only, and this patient "
+                "hasn't been seen there. Offer another provider in that specialty if there is one, or hand off to the "
+                "scheduling queue."
+            ),
+        }
     # Specialists who require a referral only see new patients who have one on file
     if provider["referral_required_for_new_patients"]:
-        seen_before = any(
-            a["patient_id"] == patient["id"] and a["provider_id"] == provider_id and a["status"] != "cancelled"
-            for a in store.appointments().values()
-        )
         referrals = [r.strip().lower() for r in (patient.get("referrals") or "").split(",") if r.strip()]
         if not seen_before and provider["specialty"].lower() not in referrals:
             return {
@@ -207,9 +219,8 @@ def book_appointment(provider_id: str, start_time: str, reason: str, session: di
     if not store.take_slot(provider_id, start_time):
         return {"success": False, "error": "That time is no longer available. Please search for open slots again."}
 
-    next_num = max((int(a.split("-")[1]) for a in store.appointments()), default=2000) + 1
     appt = {
-        "id": f"APT-{next_num}",
+        "id": f"APT-{_next_number(list(store.appointments()), 2000)}",
         "patient_id": patient["id"],
         "provider_id": provider_id,
         "provider_name": provider["name"],
@@ -230,7 +241,7 @@ def book_appointment(provider_id: str, start_time: str, reason: str, session: di
     return {"success": True, "appointment": {**appt, "when": _when(appt["start_time"])}, "instructions": instructions}
 
 
-def cancel_appointment(appointment_id: str, session: dict, acknowledge_late_fee: bool = False) -> dict:
+def cancel_appointment(appointment_id: str, session: dict) -> dict:
     patient = _verified_patient(session)
     if patient is None:
         return {"success": False, "error": NOT_VERIFIED_ERROR}
@@ -249,23 +260,21 @@ def cancel_appointment(appointment_id: str, session: dict, acknowledge_late_fee:
     if hours_until <= 0:
         return {"success": False, "error": f"Appointment {appointment_id} has already started or passed."}
     is_late = hours_until < LATE_CANCEL_HOURS
-    # An acknowledgement only counts if the fee was disclosed in an earlier turn, so the patient
-    # has actually seen it. Without this the model could disclose and accept in the same breath.
-    disclosed = session.setdefault("late_fee_disclosed", {})
-    seen_earlier = appointment_id in disclosed and disclosed[appointment_id] < session.get("turn", 0)
-    if is_late and not (acknowledge_late_fee and seen_earlier):
-        disclosed.setdefault(appointment_id, session.get("turn", 0))
+    # The model can't agree to the fee for the patient. Code records consent (safety.record_fee_consent)
+    # only when the patient answers a plain yes to a reply that showed the fee.
+    if is_late and session.get("late_fee_consent") != appointment_id:
+        session["pending_fee"] = {"appointment_id": appointment_id, "disclosed_turn": None}
         return {
             "success": False,
             "requires_acknowledgement": True,
             "error": (
-                f"Appointment {appointment_id} is less than {LATE_CANCEL_HOURS} hours away. "
-                f"Cancelling now incurs a ${LATE_CANCEL_FEE_USD:.2f} late-cancellation fee. "
-                "Tell the patient about the fee in your reply and ask if they accept it. Call again with "
-                "acknowledge_late_fee=true only after they explicitly agree to the fee in a later message."
+                f"Appointment {appointment_id} is less than {LATE_CANCEL_HOURS} hours away, so cancelling now incurs a "
+                f"{LATE_CANCEL_FEE_TEXT} late-cancellation fee. Tell the patient about the fee and ask whether they accept "
+                "it. The system records their answer; if they say yes, call cancel_appointment again in that next turn."
             ),
         }
 
+    session.pop("late_fee_consent", None)  # used up
     store.set_appointment_status(appointment_id, "cancelled")
     # Release the slot so it can be booked again
     store.release_slot(appt["provider_id"], appt["start_time"])
@@ -340,9 +349,23 @@ def submit_refill_request(medication: str, session: dict) -> dict:
             ),
         }
 
+    # The same medication asked twice is one request, not two
+    existing = next((r for r in store.refill_requests() if r["patient_id"] == patient["id"]
+                     and r["medication"] == rx["medication"] and r["status"] == "pending_provider_review"), None)
+    if existing:
+        return {
+            "success": True,
+            "request_id": existing["id"],
+            "medication": rx["medication"],
+            "status": "pending_provider_review",
+            "already_requested": True,
+            "message": (f"A refill request for {rx['medication']} is already with {rx['prescriber']} for review "
+                        f"({existing['id']}). No second request was sent."),
+        }
+
     # Every refill is a request for provider review, never an approval
     request = {
-        "id": f"RFL-{len(store.refill_requests()) + 1001}",
+        "id": f"RFL-{_next_number(store.refill_requests(), 1000)}",
         "patient_id": patient["id"],
         "medication": rx["medication"],
         "prescriber": rx["prescriber"],
@@ -362,6 +385,18 @@ def submit_refill_request(medication: str, session: dict) -> dict:
             "the provider may also ask for a visit first."
         ),
     }
+
+
+def _next_number(records: list, floor: int) -> int:
+    """Next ID number after the highest existing one ('RFL-1003' -> 1004). Records are dicts with
+    an 'id' or the IDs themselves."""
+    nums = []
+    for r in records:
+        rid = r.get("id", "") if isinstance(r, dict) else r
+        tail = str(rid).rsplit("-", 1)[-1]
+        if tail.isdigit():
+            nums.append(int(tail))
+    return max(nums, default=floor) + 1
 
 
 def _handoff_failed(unconfirmed: bool, detail: str) -> dict:
@@ -387,6 +422,8 @@ def handoff_to_staff(
 ) -> dict:
     if queue not in HANDOFF_QUEUES:
         return {"success": False, "error": f"Unknown queue '{queue}'. Use one of: {', '.join(HANDOFF_QUEUES)}."}
+    if priority not in HANDOFF_PRIORITIES:
+        return {"success": False, "error": f"Unknown priority '{priority}'. Use one of: {', '.join(HANDOFF_PRIORITIES)}."}
     store = get_store(session)
     patient = _verified_patient(session)
     # Staff can't follow up with an unverified caller unless they know who to call
@@ -422,7 +459,7 @@ def handoff_to_staff(
         handoff["id"] = result["case_number"]
     else:
         try:
-            handoff["id"] = f"HO-{len(store.handoffs()) + 1001}"
+            handoff["id"] = f"HO-{_next_number(store.handoffs(), 1000)}"
             store.add_handoff(handoff)
         except Exception as e:  # e.g. a Sheets timeout: the row may or may not have been written
             return _handoff_failed(True, str(e))
@@ -535,19 +572,15 @@ TOOL_SCHEMAS = [
         "name": "cancel_appointment",
         "description": (
             "Cancel one of the verified patient's scheduled appointments. "
-            "IMPORTANT: Only call this after you have read back the appointment details and the patient has explicitly confirmed. "
-            f"Appointments less than {LATE_CANCEL_HOURS} hours away carry a ${LATE_CANCEL_FEE_USD:.0f} late-cancellation fee: "
-            "state the fee in your reply, and set acknowledge_late_fee=true only after the patient explicitly agrees "
-            "to the fee in a later message. A plain 'yes' to cancelling is not agreement to the fee."
+            "For an appointment with no late fee: only call this after you have read back the appointment and the patient "
+            f"has explicitly confirmed. For one less than {LATE_CANCEL_HOURS} hours away (late_cancel_fee_usd > 0 in "
+            "list_appointments), call it as soon as the patient says which appointment: it never cancels without the "
+            f"patient's own agreement to the {LATE_CANCEL_FEE_TEXT} fee, which the system shows them and records."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "appointment_id": {"type": "string", "description": "Appointment ID from list_appointments, e.g. APT-2001."},
-                "acknowledge_late_fee": {
-                    "type": "boolean",
-                    "description": "Set true only if the patient has explicitly accepted the late-cancellation fee.",
-                },
             },
             "required": ["appointment_id"],
         },
@@ -639,5 +672,11 @@ def dispatch_tool(tool_name: str, tool_input: dict, session: dict) -> str:
             kwargs["session"] = session
         result = TOOL_DISPATCH[tool_name](**kwargs)
         return json.dumps(result)
-    except Exception as e:
-        return json.dumps({"success": False, "error": str(e)})
+    except TypeError:
+        # Wrong or missing arguments: say so without echoing Python internals to the model
+        return json.dumps({"success": False, "error": f"Invalid arguments for {tool_name}. Check the tool's input schema."})
+    except Exception as e:  # never show the model a raw exception (it can leak internals or invite retries)
+        print(f"tool {tool_name} failed: {e!r}", flush=True)
+        return json.dumps({"success": False, "retry": False,
+                           "error": "Something went wrong on our side. Apologize and offer a handoff or the "
+                                    f"Patient Access Center number, {PATIENT_ACCESS_PHONE}."})

@@ -15,7 +15,27 @@ Built with AI coding assistance (Claude Code) to learn the Claude API and agent 
   the contact-center handoff design; and reviewing the result. The reasoning is in [DESIGN.md](DESIGN.md).
 - **The AI's part:** most of the implementation, written to that design.
 - **What I'd change for production** is listed in DESIGN.md: EHR integration, handoff into contact-center
-  queues, and an evaluation suite.
+  queues, real access control, and a clinician-reviewed emergency classifier.
+
+## How it works
+
+```mermaid
+flowchart LR
+    P[Patient<br/>web · portal · SMS · voice] --> UI[ui/app.py<br/>Gradio drawer]
+    UI --> S1[safety.py<br/>card redaction · emergency check]
+    S1 --> A[agent.py<br/>prompt + tool loop]
+    A <--> C[(Claude API)]
+    A --> T[tools.py<br/>10 tools, rules in code]
+    T --> D[(data_store.py<br/>memory · Google Sheet)]
+    T --> H[(Salesforce Cases<br/>staff handoffs)]
+    A --> S2[safety.py<br/>emergency notice · late-fee disclosure]
+    S2 --> UI
+```
+
+**The model decides what to say; code decides what is allowed.** Identity, cross-patient access, controlled
+substances, referrals, the established-patients-only rule and consent to the late-cancellation fee are all
+enforced in `tools.py` and `safety.py`, and each has an offline test in `tests/`. The emergency notice and the
+fee disclosure are added by code on every exit path, including a failed or empty model reply.
 
 ## Run it
 
@@ -69,7 +89,7 @@ Identity is verified by first name, last name and date of birth.
 | Dr. Patel | Primary Care | Eastside Clinic | |
 | Dr. Reyes | Orthopedics | Midtown Clinic | New patients need a referral |
 | Dr. Reed | Cardiology | Heart & Vascular Center | New patients need a referral |
-| Dr. Shah | Dermatology | Midtown Clinic | |
+| Dr. Shah | Dermatology | Midtown Clinic | Established patients only |
 
 Open slots are generated for the next two weeks, relative to today, so the demo never goes stale.
 
@@ -85,7 +105,9 @@ Open slots are generated for the next two weeks, relative to today, so the demo 
 Also worth trying:
 
 - **Emergency:** `My dad has chest pain and his arm is numb`. Clara directs you to 911 immediately and doesn't queue it. A keyword check in code adds the 911 notice even if the model forgets.
-- **Late-cancellation fee:** as Maria, `cancel my appointment tomorrow`. The tool refuses until you accept the $50 fee.
+- **Late-cancellation fee:** as Maria, `cancel my appointment tomorrow`. The tool won't cancel yet. Code makes
+  sure the $50 fee is in Clara's reply, and only your next message, if it's a plain yes, counts as agreement.
+  The model can't agree on your behalf.
 - **Controlled substance:** as Sarah, `refill my alprazolam`. Refused in code and routed to the provider's office.
 - **Billing dispute:** `I was charged twice for my last visit`. Handed off to billing.
 - **Failed verification:** give a wrong date of birth three times. Clara locks verification and hands off to Patient Access.
@@ -98,9 +120,11 @@ Also worth trying:
 ```
 start_demo.py            # One command: reset the sheet (if using Sheets) and start the app
 main.py                  # Launches the Gradio app on port 7860
-ui.py                    # Chat UI: emergency banner, quick actions, typing indicator, per-tab session
-agent.py                 # System prompt + tool-use loop (Claude API), emergency backstop
-tools.py                 # 7 tools, their JSON schemas, and the code-enforced guardrails
+ui/                      # Hospital homepage with the Clara drawer: chat cards, channels, presenter view
+agent.py                 # System prompt + tool-use loop (Claude API); model client injected for tests
+safety.py                # Guardrails in code: emergency check and notice, card redaction, late-fee consent
+constants.py             # Phone number and late-fee values shared by agent, tools and UI
+tools.py                 # 10 tools, their JSON schemas, and the code-enforced rules
 knowledge_base.py        # Sierra Valley Health policies, injected into the system prompt
 data_store.py            # Data backends (in-memory or Google Sheets) behind one interface
 mock_data.py             # Synthetic patients, providers, appointments, prescriptions, slots
@@ -109,8 +133,28 @@ salesforce_client.py     # Optional: staff handoffs as Salesforce Cases
 credentials.py           # Reads secrets from the OS keychain (env var fallback)
 salesforce/AssistantActionService.cls  # Apex REST class for case creation
 salesforce/seed_demo_data.apex         # Demo patients + a sample Case for a Developer org
+tests/                   # Offline guardrail tests (scripted model client, no API calls)
+evals/model_eval.py      # Model bake-off: 21 scripted conversations graded by Claude (costs API money)
+docs/threat-model.md     # What could go wrong, and what stops it
 DESIGN.md                # Architecture and design decisions
 ```
+
+## Tests and evals
+
+- `uv run pytest -q` runs the offline guardrail suite: every rule above, the emergency notice on every exit
+  path and channel, and the late fee on web, portal, SMS and voice. A scripted stand-in replaces the Claude
+  client, so it needs no key. CI runs it on Linux and Windows with gitleaks and ruff (`.github/workflows/`).
+- `uv run python evals/model_eval.py` runs 21 scripted conversations per model (booking, referral, late cancel,
+  emergency mid-booking, controlled refill, direct and indirect prompt injection, another patient's records,
+  SMS, voice, portal, Spanish) and has Claude grade each transcript against a rubric. Safety scenarios are
+  always graded by Opus. It calls the API, so it costs money.
+
+## Channels
+
+One agent, four channels. The tools and guardrails don't change; the channel changes how Clara talks and
+what the screen can show. **Web** and **portal** chat show cards (open times, read-backs, receipts). **SMS**
+and **voice** are simulated in the same drawer: words only, short replies, numbered choices on SMS, spoken
+dates on voice, and plain-text emergency and fee notices.
 
 ## Data backends
 
@@ -176,4 +220,5 @@ org as disposable: these steps rebuild it in about 20 minutes.
 When the org is deleted, delete the two `salesforce-*` keychain entries too
 (`uv run keyring del patient-access salesforce-client-id`, and the same for `salesforce-client-secret`).
 
-**Model:** `claude-opus-4-6`. See *Model choice* in `DESIGN.md`.
+**Model:** `claude-haiku-5-5` at low effort by default (set `CLARA_MODEL` to change it). In the eval bake-off
+it matched Opus 5.5 on every safety check at a fraction of the cost. See *Model choice* in `DESIGN.md`.
