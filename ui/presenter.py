@@ -182,7 +182,7 @@ def _render_turn(t: dict, latest: bool) -> str:
 TRUST = [
     "Patient records stay locked until identity matches the chart",
     "No clinical advice: symptoms and medication questions go to a nurse",
-    "Every message is checked for emergency language",
+    "Every message gets a keyword check for emergency language (a floor under the model, not a classifier)",
     "Controlled substances are never refilled by the agent",
     f"Cancelling within {LATE_CANCEL_HOURS} hours is blocked until the patient says yes to the {LATE_CANCEL_FEE_TEXT} fee they were shown",
 ]

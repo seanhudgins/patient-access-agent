@@ -3,33 +3,49 @@
 Nothing here depends on the model behaving: each check reads the patient's message or Clara's final
 reply and changes what the patient sees, whatever the model did.
 
-- Emergencies: a deterministic pattern (English and Spanish) decides before the model runs; the
-  notice is attached on every exit path and every channel.
+- Emergencies: a keyword floor (English and Spanish), checked before the model runs. When it fires, the
+  code-owned notice is put first in the reply on every exit path and every channel. It is a floor, not a
+  classifier: it catches common phrasings, and the prompt handles the rest.
 - Payment cards: Luhn-valid card numbers are removed before anything else sees the message.
-- Late-cancel fee: code makes sure the fee is in the reply the patient sees, and records the
-  patient's agreement only from their next message. The model can't assert consent.
+- Late-cancel fee: code always adds its own fee sentence (naming the appointment) to the reply the patient
+  sees, and records agreement only from the patient's next message, if it is a plain yes. The model can't
+  assert consent.
+- Markdown links and images in Clara's replies are flattened to text, so a reply can't carry a link or a
+  tracking image.
 """
 from __future__ import annotations
 
 import re
+import unicodedata
 
-from constants import LATE_CANCEL_FEE_TEXT, LATE_CANCEL_HOURS, PATIENT_ACCESS_PHONE
+from constants import LATE_CANCEL_FEE_USD, LATE_CANCEL_HOURS, PATIENT_ACCESS_PHONE
+
+
+def normalize(text: str) -> str:
+    """Lower case, straight apostrophes, no accents: so "I can’t", "I can't" and "Sí" / "si" compare equal."""
+    text = (text or "").replace("’", "'").replace("‘", "'").replace("ʼ", "'")
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return text.lower()
+
 
 # --- Emergencies -------------------------------------------------------------------------------
 
-EMERGENCY_PATTERN = re.compile(
-    # English
-    r"chest (pain|pressure|tight)|can'?t breathe|trouble breathing|short(ness)? of breath|"
-    r"stroke|face (is )?droop|slurred speech|unconscious|passed out|seizure|severe bleeding|"
-    r"anaphyla|throat (is )?(closing|swelling)|overdos|suicid|kill myself|end my life|self[- ]harm|"
-    # Spanish
-    r"dolor (de|en el) pecho|presi[oó]n en el pecho|no puedo respirar|dificultad para respirar|falta de aire|"
-    r"derrame cerebral|cara ca[ií]da|desmay|inconsciente|convulsi|sangrado (grave|abundante|fuerte)|"
-    r"sobredosis|quitarme la vida|matarme|hacerme da[nñ]o",
-    re.IGNORECASE,
+# Matched against normalize(message): lower case, no accents, straight apostrophes.
+_EMERGENCY_EN = re.compile(
+    r"chest (pain|pressure|tight|hurts)|my chest (hurts|is hurting)|heart attack|"
+    r"can'?t breathe|cannot breathe|can not breathe|trouble breathing|short(ness)? of breath|"
+    r"stroke|face (is )?droop|slurred speech|unconscious|passed out|faint(ed|ing)?\b|seizure|"
+    r"severe bleeding|coughing (up )?blood|anaphyla|throat (is )?(closing|swelling)|overdos|"
+    r"suicid|kill myself|end my life|want to die|wanna die|hurt(ing)? myself|self[- ]harm"
+)
+_EMERGENCY_ES = re.compile(
+    r"dolor (de|en el) pecho|me duele el pecho|presion en el pecho|infarto|ataque (al|del) corazon|"
+    r"no puedo respirar|no respiro|dificultad para respirar|falta de aire|derrame cerebral|cara caida|"
+    r"desmay|inconsciente|convulsi|sangrado (grave|abundante|fuerte)|tosiendo sangre|sobredosis|"
+    r"suicid|quitarme la vida|matarme|(me )?quiero morir|hacerme dano"
 )
 
-# Plain text on every channel: no markdown or emoji (SMS shows them raw, text-to-speech reads them).
 EMERGENCY_NOTICES = {
     "web": ("If this is a medical emergency, call 911 or go to the nearest emergency room now. "
             "If you're having thoughts of suicide or self-harm, call or text 988 (Suicide & Crisis Lifeline)."),
@@ -37,31 +53,41 @@ EMERGENCY_NOTICES = {
     "voice": ("If this is a medical emergency, hang up and call nine one one now. "
               "For thoughts of suicide or self-harm, call or text nine eight eight."),
 }
-EMERGENCY_NOTICES["portal"] = EMERGENCY_NOTICES["web"]
-_HAS_911 = re.compile(r"911|9-1-1|9 1 1|nine one one", re.IGNORECASE)
+EMERGENCY_NOTICES_ES = {
+    "web": ("Si es una emergencia médica, llame al 911 o vaya a la sala de emergencias más cercana ahora. "
+            "Si tiene pensamientos de suicidio o de hacerse daño, llame o envíe un mensaje al 988 "
+            "(Línea de Prevención del Suicidio y Crisis)."),
+    "sms": "Si es una emergencia, llame al 911 ahora. Si piensa en suicidarse o hacerse daño, llame o escriba al 988.",
+    "voice": ("Si es una emergencia médica, cuelgue y llame al nueve uno uno ahora. "
+              "Si piensa en suicidarse o hacerse daño, llame al nueve ocho ocho."),
+}
+for _notices in (EMERGENCY_NOTICES, EMERGENCY_NOTICES_ES):
+    _notices["portal"] = _notices["web"]
 
 
 def is_emergency(message: str) -> bool:
-    return bool(EMERGENCY_PATTERN.search(message or ""))
+    m = normalize(message)
+    return bool(_EMERGENCY_EN.search(m) or _EMERGENCY_ES.search(m))
 
 
-def emergency_notice(channel: str | None) -> str:
-    return EMERGENCY_NOTICES.get(channel or "web", EMERGENCY_NOTICES["web"])
+def emergency_notice(channel: str | None, message: str = "") -> str:
+    """The notice for this channel, in Spanish when the message matched only Spanish terms."""
+    m = normalize(message)
+    spanish = bool(_EMERGENCY_ES.search(m)) and not _EMERGENCY_EN.search(m)
+    notices = EMERGENCY_NOTICES_ES if spanish else EMERGENCY_NOTICES
+    return notices.get(channel or "web", notices["web"])
 
 
-def with_emergency_notice(text: str, channel: str | None) -> str:
-    """Put the notice first unless the reply already sends them to 911."""
-    if text and _HAS_911.search(text):
+def with_emergency_notice(text: str, channel: str | None, message: str = "") -> str:
+    """Always put the code-owned notice first (it carries both 911 and 988), whatever the reply says."""
+    notice = emergency_notice(channel, message)
+    if text.startswith(notice):
         return text
-    notice = emergency_notice(channel)
     return f"{notice}\n\n{text}" if text else notice
 
 
 def trouble_reply(channel: str | None) -> str:
     """What the patient sees when the model call fails or returns nothing."""
-    if channel == "voice":
-        return ("Sorry, I'm having trouble right now. Please try again, or call Patient Access at "
-                f"{PATIENT_ACCESS_PHONE}.")
     return f"Sorry, I'm having trouble right now. Please try again, or call Patient Access at {PATIENT_ACCESS_PHONE}."
 
 
@@ -90,40 +116,104 @@ def redact_payment_details(text: str) -> str:
     return _CARD_PATTERN.sub(swap, text or "")
 
 
+# --- Markdown in model replies -----------------------------------------------------------------
+
+_MD_IMAGE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+_MD_LINK = re.compile(r"\[([^\]]+)\]\(\s*([^)\s]*)[^)]*\)")
+_MD_REF_DEF = re.compile(r"^\s*\[[^\]]+\]:\s*\S+.*$", re.MULTILINE)
+_MD_REF_LINK = re.compile(r"\[([^\]]+)\]\[[^\]]*\]")
+
+
+def flatten_markdown_links(text: str) -> str:
+    """Images become their alt text, links become their text (plus the address if it is plain https),
+    so a reply can't hide a javascript: link or load a tracking image."""
+    text = _MD_IMAGE.sub(lambda m: m.group(1), text or "")
+    text = _MD_REF_DEF.sub("", text)
+    text = _MD_REF_LINK.sub(lambda m: m.group(1), text)
+
+    def link(m: re.Match) -> str:
+        label, url = m.group(1), m.group(2)
+        return f"{label} ({url})" if url.lower().startswith("https://") and url != label else label
+    return _MD_LINK.sub(link, text)
+
+
 # --- Late-cancel fee: disclosure and consent owned by code ---------------------------------------
 #
-# session["pending_fee"] = {"appointment_id": ..., "disclosed_turn": int | None}
+# session["pending_fee"] = {"appointment_id", "provider_name", "when", "disclosed_turn": int | None}
 #   set by tools.cancel_appointment when a late cancel needs agreement.
-# At the end of that turn, ensure_fee_disclosed() makes sure the reply the patient sees names the
-# fee (appending a fixed sentence if the model's text doesn't) and records the turn.
+# At the end of that turn, ensure_fee_disclosed() always appends the code-owned fee sentence (naming the
+# appointment) to the reply the patient sees, and records the turn. Text the model wrote never counts.
 # At the start of the next turn, record_fee_consent() sets session["late_fee_consent"] to the
 # appointment ID only if the patient's message is a plain yes. The consent lasts for that one turn.
 
-FEE_SENTENCES = {
-    "web": (f"Because this visit is less than {LATE_CANCEL_HOURS} hours away, cancelling now has a "
-            f"{LATE_CANCEL_FEE_TEXT} late-cancellation fee. Do you accept the fee?"),
-    "sms": f"Cancelling now has a {LATE_CANCEL_FEE_TEXT} late fee. Reply YES to accept it or NO to keep the visit.",
-    "voice": ("Because this visit is less than twenty-four hours away, cancelling now has a fifty dollar late fee. "
-              "Say yes to accept it, or no to keep your appointment."),
-}
-FEE_SENTENCES["portal"] = FEE_SENTENCES["web"]
-_NAMES_FEE = re.compile(r"\$\s?50\b|\b50 dollars?\b|\bfifty[- ]dollars?\b|\b50 d[oó]lares\b|\bcincuenta d[oó]lares\b",
-                        re.IGNORECASE)
-_YES = re.compile(
-    r"^\s*(yes|yeah|yep|yup|sure|ok|okay|i accept|accept|i agree|agreed|confirm|go ahead|that'?s fine|fine|"
-    r"s[ií]|claro|de acuerdo|acepto)\b",
-    re.IGNORECASE,
-)
-_NO = re.compile(r"\b(no|nope|not|don'?t|do not|never ?mind|keep|wait|stop|cancel that)\b", re.IGNORECASE)
+_ONES = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven",
+         "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+_TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
 
 
-def names_fee(text: str) -> bool:
-    return bool(_NAMES_FEE.search(text or ""))
+def number_words(n: int) -> str:
+    """0-999 in words, for text-to-speech ("twenty-four", "one hundred fifty")."""
+    if n < 20:
+        return _ONES[n]
+    if n < 100:
+        return _TENS[n // 10] + (f"-{_ONES[n % 10]}" if n % 10 else "")
+    rest = n % 100
+    return f"{_ONES[n // 100]} hundred" + (f" {number_words(rest)}" if rest else "")
+
+
+FEE_DOLLARS = int(LATE_CANCEL_FEE_USD) if LATE_CANCEL_FEE_USD == int(LATE_CANCEL_FEE_USD) else None
+FEE_TEXT = f"${LATE_CANCEL_FEE_USD:.0f}" if FEE_DOLLARS is not None else f"${LATE_CANCEL_FEE_USD:.2f}"
+
+
+def fee_sentence(channel: str | None, pending: dict) -> str:
+    """The code-owned disclosure, naming the appointment, built from constants."""
+    when = pending.get("when")
+    who = pending.get("provider_name") or "your provider"
+    visit = f"your {when} visit with {who}" if when else f"your visit with {who}"
+    if channel == "sms":
+        return f"Cancelling {visit} now has a {FEE_TEXT} late fee. Reply YES to accept it or NO to keep it."
+    if channel == "voice":
+        dollars = f"{number_words(FEE_DOLLARS)} dollar" if FEE_DOLLARS is not None else FEE_TEXT
+        return (f"Because {visit} is less than {number_words(LATE_CANCEL_HOURS)} hours away, cancelling now has a "
+                f"{dollars} late fee. Say yes to accept it, or no to keep your appointment.")
+    return (f"Because {visit} is less than {LATE_CANCEL_HOURS} hours away, cancelling now has a {FEE_TEXT} "
+            "late-cancellation fee. Do you accept the fee?")
+
+
+def _yes_phrases() -> tuple[set[str], set[str]]:
+    fee = f"the {FEE_DOLLARS} fee" if FEE_DOLLARS is not None else "the fee"
+    heads = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "confirm", "confirmed", "i confirm", "agreed",
+             "i agree", "i accept", "accept", "fine", "correct", "si", "claro", "de acuerdo", "acepto",
+             "i accept the fee", f"i accept {fee}", "accept the fee", f"accept {fee}", "i agree to the fee",
+             f"i agree to {fee}", "acepto el cargo"}
+    tails = heads | {
+        "please", "por favor", "go ahead", "go ahead and cancel it", "cancel it", "please cancel it",
+        "cancel the appointment", "please cancel the appointment", "thats fine", "that is fine",
+        "the fee is fine", "cancelala", "cancelalo", "cancela la cita",
+    }
+    return heads, tails
+
+
+_HEADS, _TAILS = _yes_phrases()
 
 
 def is_plain_yes(message: str) -> bool:
-    """A deterministic yes: starts with an affirmative and contains no negation."""
-    return bool(_YES.search(message or "")) and not _NO.search(message or "")
+    """A deterministic yes: after normalising, the whole message must be built only from a closed set
+    of affirmative phrases, starting with one. Questions, conditions and anything else are not consent."""
+    if "?" in (message or "") or "¿" in (message or ""):
+        return False
+    words = re.sub(r"[^a-z0-9 ]+", " ", normalize(message).replace("'", "")).split()
+    if not words:
+        return False
+
+    def parse(i: int, allowed: set[str]) -> bool:
+        if i == len(words):
+            return True
+        for n in range(min(6, len(words) - i), 0, -1):
+            if " ".join(words[i:i + n]) in allowed and parse(i + n, _TAILS):
+                return True
+        return False
+    return parse(0, _HEADS)
 
 
 def record_fee_consent(session: dict, message: str) -> None:
@@ -138,15 +228,14 @@ def record_fee_consent(session: dict, message: str) -> None:
 
 
 def ensure_fee_disclosed(session: dict, text: str) -> str:
-    """End of a turn: if a late cancel is waiting for agreement, the patient must see the fee."""
+    """End of a turn: if a late cancel is waiting for agreement, append the code-owned fee sentence.
+    The model's own words never count as disclosure (they could mention any $50, e.g. a copay)."""
     pending = session.get("pending_fee")
     if not pending or pending.get("disclosed_turn") is not None:
         return text
-    if not names_fee(text):
-        sentence = FEE_SENTENCES.get(session.get("channel", "web"), FEE_SENTENCES["web"])
-        text = f"{text}\n\n{sentence}" if text else sentence
+    sentence = fee_sentence(session.get("channel", "web"), pending)
     pending["disclosed_turn"] = session.get("turn", 0)
-    return text
+    return f"{text}\n\n{sentence}" if text else sentence
 
 
 def end_turn(session: dict) -> None:

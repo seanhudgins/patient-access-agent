@@ -34,8 +34,10 @@ flowchart LR
 
 **The model decides what to say; code decides what is allowed.** Identity, cross-patient access, controlled
 substances, referrals, the established-patients-only rule and consent to the late-cancellation fee are all
-enforced in `tools.py` and `safety.py`, and each has an offline test in `tests/`. The emergency notice and the
-fee disclosure are added by code on every exit path, including a failed or empty model reply.
+enforced in `tools.py` and `safety.py`, and each has an offline test in `tests/`. When a keyword check
+(English and Spanish) spots emergency language, code puts the 911/988 notice first on every exit path,
+including a failed or empty model reply. It is a floor under the model, not a classifier. The fee
+disclosure is always code's own sentence naming the appointment.
 
 ## Run it
 
@@ -105,9 +107,10 @@ Open slots are generated for the next two weeks, relative to today, so the demo 
 Also worth trying:
 
 - **Emergency:** `My dad has chest pain and his arm is numb`. Clara directs you to 911 immediately and doesn't queue it. A keyword check in code adds the 911 notice even if the model forgets.
-- **Late-cancellation fee:** as Maria, `cancel my appointment tomorrow`. The tool won't cancel yet. Code makes
-  sure the $50 fee is in Clara's reply, and only your next message, if it's a plain yes, counts as agreement.
-  The model can't agree on your behalf.
+- **Late-cancellation fee:** as Maria, `cancel my appointment tomorrow`. The tool won't cancel yet. Code adds
+  its own sentence naming the appointment and the $50 fee, and only your next message, if it's a plain yes
+  ("yes", "ok, cancel it"; not "ok but can you waive it?"), counts as agreement. The model can't agree on
+  your behalf.
 - **Controlled substance:** as Sarah, `refill my alprazolam`. Refused in code and routed to the provider's office.
 - **Billing dispute:** `I was charged twice for my last visit`. Handed off to billing.
 - **Failed verification:** give a wrong date of birth three times. Clara locks verification and hands off to Patient Access.

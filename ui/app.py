@@ -104,7 +104,7 @@ def run_turn(message: str, history: list[dict], session: dict, turns: list[dict]
         reply = safety.trouble_reply(session.get("channel"))
     emergency = safety.is_emergency(message)
     if emergency:
-        reply = safety.with_emergency_notice(reply, session.get("channel"))  # no-op if chat() already added it
+        reply = safety.with_emergency_notice(reply, session.get("channel"), message)  # no-op if chat() already added it
     text_only = session.get("channel") in TEXT_ONLY
     # Backstop for the refill picker: if Clara asks which medication without having looked them up,
     # look them up here so the one-tap picker always appears for a verified patient.
@@ -120,9 +120,9 @@ def run_turn(message: str, history: list[dict], session: dict, turns: list[dict]
         turn_cards.append({"role": "assistant", "content": cards.quick_replies(quick)})
     if card_removed:
         turn_cards.insert(0, {"role": "assistant", "content": cards.card_removed_notice()})
-    # The model's words are escaped: the chatbot renders HTML (for the server-built cards), so a reply
-    # must never be able to inject markup. Markdown still renders.
-    text = [{"role": "assistant", "content": escape(reply or safety.trouble_reply(session.get("channel")), quote=False)}]
+    # The model's words are escaped and markdown links/images flattened: the chatbot renders HTML and
+    # markdown (for the server-built cards), so a reply must never inject markup, a link or an image.
+    text = [{"role": "assistant", "content": escape(safety.flatten_markdown_links(reply) or safety.trouble_reply(session.get("channel")), quote=False)}]
     body = turn_cards + text if emergency else text + turn_cards
     turns = turns + [presenter.build_turn(message, events, reply, emergency, session.get("channel", "web"))]
     yield base + ([] if text_only else _status_messages(events)) + body, cards.verified_chip(session), presenter.render(turns), turns

@@ -5,6 +5,7 @@ name: checks
 
 on:
   push:
+    branches: [main]  # branches are checked through their pull request, so each change runs once
   pull_request:
 
 permissions:

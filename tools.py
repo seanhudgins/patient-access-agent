@@ -263,7 +263,16 @@ def cancel_appointment(appointment_id: str, session: dict) -> dict:
     # The model can't agree to the fee for the patient. Code records consent (safety.record_fee_consent)
     # only when the patient answers a plain yes to a reply that showed the fee.
     if is_late and session.get("late_fee_consent") != appointment_id:
-        session["pending_fee"] = {"appointment_id": appointment_id, "disclosed_turn": None}
+        pending = session.get("pending_fee")
+        if pending and pending["appointment_id"] != appointment_id:
+            # One fee question at a time: never overwrite the one the patient is about to answer
+            return {
+                "success": False,
+                "error": (f"A late-cancellation fee for {pending['appointment_id']} is already waiting for the "
+                          "patient's answer. Settle that one first, then ask about this appointment."),
+            }
+        session["pending_fee"] = {"appointment_id": appointment_id, "provider_name": appt["provider_name"],
+                                  "when": _when(appt["start_time"]), "disclosed_turn": None}
         return {
             "success": False,
             "requires_acknowledgement": True,

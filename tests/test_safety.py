@@ -8,8 +8,14 @@ import safety
 CHEST = "I need to book a visit, also my chest pain started an hour ago"
 
 
-@pytest.mark.parametrize("message", [CHEST, "I can't breathe well", "tengo dolor de pecho", "me desmayé hoy",
-                                     "No puedo respirar bien", "pienso en quitarme la vida"])
+@pytest.mark.parametrize("message", [
+    CHEST, "I can't breathe well", "tengo dolor de pecho", "me desmayé hoy", "No puedo respirar bien",
+    "pienso en quitarme la vida",
+    # from the 2026-11-20 checkpoint review
+    "I can\u2019t breathe", "I cannot breathe", "I think it's a heart attack", "my chest hurts", "I want to die",
+    "I keep wanting to hurt myself", "he fainted at lunch", "I'm coughing up blood", "creo que es un infarto",
+    "ataque al corazón", "me duele el pecho", "me quiero morir", "no respiro",
+])
 def test_emergency_pattern_english_and_spanish(message):
     assert safety.is_emergency(message)
 
@@ -44,11 +50,42 @@ def test_notice_after_loop_cap(fake_model, monkeypatch):
     assert "911" in reply and "problem processing" in reply
 
 
-def test_model_reply_with_911_is_not_doubled(fake_model):
-    fake_model(text("Please call 911 now."))
+@pytest.mark.parametrize("model_reply", ["Please call 911 now.", "You don't need to call 911 for this.",
+                                         "Your appointment APT-2911 is booked."])
+def test_code_notice_always_comes_first(fake_model, model_reply):
+    """No reply text can suppress the notice (an unanchored '911' check used to)."""
+    fake_model(text(model_reply))
     s = {"channel": "web", "patient_id": None, "failed_verifications": 0, "messages": []}
     reply, _ = run_turn(CHEST, s)
-    assert reply == "Please call 911 now."
+    assert reply.startswith(safety.EMERGENCY_NOTICES["web"]) and reply.count(safety.EMERGENCY_NOTICES["web"]) == 1
+
+
+def test_self_harm_always_gets_988(fake_model):
+    fake_model(text("Please call 911 right away."))
+    s = {"channel": "sms", "patient_id": None, "failed_verifications": 0, "messages": []}
+    reply, _ = run_turn("I want to hurt myself", s)
+    assert "988" in reply
+
+
+@pytest.mark.parametrize("channel", ["web", "sms", "voice"])
+def test_spanish_trigger_gets_spanish_notice(channel):
+    assert safety.emergency_notice(channel, "me duele el pecho") == safety.EMERGENCY_NOTICES_ES[channel]
+    assert safety.emergency_notice(channel, "my chest hurts") == safety.EMERGENCY_NOTICES[channel]
+
+
+@pytest.mark.parametrize("reply, banned", [
+    ("Click [here](javascript:alert(1)) to reset", "javascript"),
+    ("![x](https://evil.example/track?q=maria)", "evil.example"),
+    ("See [portal][1]\n\n[1]: javascript:alert(1)", "javascript"),
+])
+def test_markdown_links_and_images_are_flattened(reply, banned):
+    flat = safety.flatten_markdown_links(reply)
+    assert banned not in flat and "](" not in flat
+
+
+def test_https_link_keeps_its_address_as_text():
+    flat = safety.flatten_markdown_links("Reset it at [MySierra](https://mysierra.example.org/reset)")
+    assert flat == "Reset it at MySierra (https://mysierra.example.org/reset)"
 
 
 def test_transcript_stays_valid_after_cutoff(fake_model):
